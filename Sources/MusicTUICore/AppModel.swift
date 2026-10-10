@@ -141,9 +141,7 @@ public struct AppModel {
   }
 
   @discardableResult
-  public mutating func handle(_ input: InputKey, music: MusicControlling, catalog: CatalogSearching)
-    -> KeyAction
-  {
+  public mutating func handle(_ input: InputKey) -> KeyAction {
     let key: String
     switch input {
     case .character(let value): key = value
@@ -168,10 +166,20 @@ public struct AppModel {
       return .continueRunning
     }
 
+    // q and Q mean the same in every mode, so they are handled once here rather
+    // than repeated in each mode switch.
+    if !typing {
+      if key == "q" { return .quitApplication }
+      if key == "Q" {
+        enqueue(.quitMusic, message: "Quitting Music…", quitAfterSuccess: true)
+        return .continueRunning
+      }
+    }
+
     switch mode {
-    case .player: return handlePlayer(key, music: music)
-    case .library: return handleLibrary(key, music: music)
-    case .catalog: return handleCatalog(key, music: music, catalog: catalog)
+    case .player: return handlePlayer(key)
+    case .library: return handleLibrary(key)
+    case .catalog: return handleCatalog(key)
     }
   }
 
@@ -229,11 +237,8 @@ public struct AppModel {
     return current
   }
 
-  private mutating func handlePlayer(_ key: String, music: MusicControlling) -> KeyAction {
+  private mutating func handlePlayer(_ key: String) -> KeyAction {
     switch key {
-    case "q": return .quitApplication
-    case "Q":
-      enqueue(.quitMusic, message: "Quitting Music…", quitAfterSuccess: true)
     case "TAB", "l":
       mode = .library
       if !playlistsLoaded && !playlistsLoading {
@@ -274,13 +279,13 @@ public struct AppModel {
   /// itself, so the three typing modes share a single edit rule.
   private static func editedDraft(_ key: String, from draft: String) -> String? {
     switch key {
-    case "BACKSPACE": return trimLastCharacter(draft)
+    case "BACKSPACE": return String(draft.dropLast())
     case " ": return draft + " "
     default: return key.count == 1 ? draft + key : nil
     }
   }
 
-  private mutating func handleLibrary(_ key: String, music: MusicControlling) -> KeyAction {
+  private mutating func handleLibrary(_ key: String) -> KeyAction {
     if trackTyping {
       switch key {
       case "ESC":
@@ -318,9 +323,6 @@ public struct AppModel {
       return .continueRunning
     }
     switch key {
-    case "q": return .quitApplication
-    case "Q":
-      enqueue(.quitMusic, message: "Quitting Music…", quitAfterSuccess: true)
     case "ESC":
       if showingTracks {
         showingTracks = false
@@ -385,9 +387,7 @@ public struct AppModel {
     return .continueRunning
   }
 
-  private mutating func handleCatalog(
-    _ key: String, music: MusicControlling, catalog: CatalogSearching
-  ) -> KeyAction {
+  private mutating func handleCatalog(_ key: String) -> KeyAction {
     if catalogTyping {
       switch key {
       case "ESC":
@@ -422,9 +422,6 @@ public struct AppModel {
       let song = results[clamp(resultCursor, min: 0, max: results.count - 1)]
       mode = .player
       enqueue(.playSong(song), message: "Playing: \(song.name) — \(song.artist)…")
-    case "q": return .quitApplication
-    case "Q":
-      enqueue(.quitMusic, message: "Quitting Music…", quitAfterSuccess: true)
     default: break
     }
     return .continueRunning

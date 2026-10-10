@@ -216,17 +216,15 @@ final class MusicTUICoreTests: XCTestCase {
   }
 
   func testHelpOverlayOpensAndClosesWithQuestionMarkOrEscape() {
-    let music = FakeMusicController()
-    let catalog = FakeCatalogSearch()
     var model = AppModel()
     XCTAssertFalse(model.helpVisible)
-    _ = model.handle(.character("?"), music: music, catalog: catalog)
+    _ = model.handle(.character("?"))
     XCTAssertTrue(model.helpVisible)
-    _ = model.handle(.escape, music: music, catalog: catalog)
+    _ = model.handle(.escape)
     XCTAssertFalse(model.helpVisible)
-    _ = model.handle(.character("?"), music: music, catalog: catalog)
+    _ = model.handle(.character("?"))
     XCTAssertTrue(model.helpVisible)
-    _ = model.handle(.character("?"), music: music, catalog: catalog)
+    _ = model.handle(.character("?"))
     XCTAssertFalse(model.helpVisible)
   }
 
@@ -234,7 +232,7 @@ final class MusicTUICoreTests: XCTestCase {
     let music = FakeMusicController()
     var model = AppModel()
 
-    _ = model.handle(.space, music: music, catalog: FakeCatalogSearch())
+    _ = model.handle(.space)
 
     XCTAssertEqual(music.playPauseCount, 0, "key handling must not synchronously call Music")
     XCTAssertEqual(model.status, "Toggling playback…")
@@ -250,7 +248,7 @@ final class MusicTUICoreTests: XCTestCase {
     let music = FakeMusicController()
     var model = AppModel()
 
-    _ = model.handle(.tab, music: music, catalog: FakeCatalogSearch())
+    _ = model.handle(.tab)
 
     XCTAssertEqual(model.mode, .library)
     XCTAssertTrue(model.playlistsLoading)
@@ -264,13 +262,12 @@ final class MusicTUICoreTests: XCTestCase {
 
   func testCatalogSearchIsQueuedOffTheInputLoop() {
     let catalog = FakeCatalogSearch()
-    let music = FakeMusicController()
     var model = AppModel()
     model.mode = .catalog
     model.catalogTyping = true
     model.catalogDraft = "Chopin"
 
-    _ = model.handle(.enter, music: music, catalog: catalog)
+    _ = model.handle(.enter)
 
     XCTAssertTrue(model.catalogSearching)
     XCTAssertEqual(catalog.searchCount, 0)
@@ -291,12 +288,10 @@ final class MusicTUICoreTests: XCTestCase {
   }
 
   func testQuestionMarkRemainsValidTextWhileSearchIsActive() {
-    let music = FakeMusicController()
-    let catalog = FakeCatalogSearch()
     var model = AppModel()
     model.mode = .catalog
     model.catalogTyping = true
-    _ = model.handle(.character("?"), music: music, catalog: catalog)
+    _ = model.handle(.character("?"))
     XCTAssertFalse(model.helpVisible)
     XCTAssertEqual(model.catalogDraft, "?")
   }
@@ -321,11 +316,10 @@ final class MusicTUICoreTests: XCTestCase {
   }
 
   func testRapidVolumePressesAccumulateInsteadOfRepeatingOneStep() {
-    let music = FakeMusicController()
     var model = AppModel()
     model.nowPlaying.volume = 60
 
-    for _ in 0..<8 { _ = model.handle(.character("+"), music: music, catalog: FakeCatalogSearch()) }
+    for _ in 0..<8 { _ = model.handle(.character("+")) }
 
     XCTAssertEqual(model.nowPlaying.volume, 100, "the display should follow the last request")
     let requested = model.takePendingCommands().compactMap { pending -> Int? in
@@ -336,22 +330,20 @@ final class MusicTUICoreTests: XCTestCase {
   }
 
   func testPendingVolumeSurvivesAStalePollAndStillStepsFromTheRequest() {
-    let music = FakeMusicController()
     var model = AppModel()
     model.nowPlaying.volume = 60
 
-    _ = model.handle(.character("+"), music: music, catalog: FakeCatalogSearch())
+    _ = model.handle(.character("+"))
     model.applyNowPlayingResult(NowPlaying(state: "playing", volume: 60), error: nil)
-    _ = model.handle(.character("+"), music: music, catalog: FakeCatalogSearch())
+    _ = model.handle(.character("+"))
 
     XCTAssertEqual(model.nowPlaying.volume, 70)
   }
 
   func testVolumeStopsAtZeroAndFullScale() {
-    let music = FakeMusicController()
     var model = AppModel()
     model.nowPlaying.volume = 2
-    for _ in 0..<3 { _ = model.handle(.character("-"), music: music, catalog: FakeCatalogSearch()) }
+    for _ in 0..<3 { _ = model.handle(.character("-")) }
     XCTAssertEqual(model.nowPlaying.volume, 0)
   }
 
@@ -359,15 +351,14 @@ final class MusicTUICoreTests: XCTestCase {
     let directory = URL(fileURLWithPath: NSTemporaryDirectory())
       .appendingPathComponent("apple-music-tui-tests-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: directory) }
-    let music = FakeMusicController()
     var model = AppModel(themeStore: ThemeStore(directory: directory))
     XCTAssertEqual(model.theme, .classic)
 
-    _ = model.handle(.character("t"), music: music, catalog: FakeCatalogSearch())
+    _ = model.handle(.character("t"))
     XCTAssertEqual(model.theme.name, "mono")
     XCTAssertEqual(ThemeStore(directory: directory).load().name, "mono")
 
-    for _ in 0..<3 { _ = model.handle(.character("t"), music: music, catalog: FakeCatalogSearch()) }
+    for _ in 0..<3 { _ = model.handle(.character("t")) }
     XCTAssertEqual(model.theme, .classic, "cycling past the last theme must wrap around")
   }
 
@@ -435,13 +426,12 @@ final class MusicTUICoreTests: XCTestCase {
   }
 
   func testTrackSearchIsQueuedOffTheInputLoop() {
-    let music = FakeMusicController()
     var model = AppModel()
     model.mode = .library
     model.trackTyping = true
     model.trackDraft = "Nocturne"
 
-    _ = model.handle(.enter, music: music, catalog: FakeCatalogSearch())
+    _ = model.handle(.enter)
 
     XCTAssertTrue(model.showingTracks)
     XCTAssertTrue(model.trackSearching)
@@ -451,7 +441,6 @@ final class MusicTUICoreTests: XCTestCase {
   }
 
   func testEnterOnALibraryTrackQueuesThatTrack() {
-    let music = FakeMusicController()
     var model = AppModel()
     model.mode = .library
     model.showingTracks = true
@@ -463,8 +452,8 @@ final class MusicTUICoreTests: XCTestCase {
         Song(name: "Ballade", artist: "Artist", album: "Piano Works", url: "", libraryID: "ID2"),
       ], error: nil)
 
-    _ = model.handle(.down, music: music, catalog: FakeCatalogSearch())
-    _ = model.handle(.enter, music: music, catalog: FakeCatalogSearch())
+    _ = model.handle(.down)
+    _ = model.handle(.enter)
 
     XCTAssertEqual(model.mode, .player)
     XCTAssertEqual(
@@ -495,16 +484,15 @@ final class MusicTUICoreTests: XCTestCase {
   }
 
   func testEscapeLeavesTheTrackListBeforeTheLibrary() {
-    let music = FakeMusicController()
     var model = AppModel()
     model.mode = .library
     model.showingTracks = true
 
-    _ = model.handle(.escape, music: music, catalog: FakeCatalogSearch())
+    _ = model.handle(.escape)
     XCTAssertFalse(model.showingTracks)
     XCTAssertEqual(model.mode, .library)
 
-    _ = model.handle(.escape, music: music, catalog: FakeCatalogSearch())
+    _ = model.handle(.escape)
     XCTAssertEqual(model.mode, .player)
   }
 
@@ -554,6 +542,26 @@ final class MusicTUICoreTests: XCTestCase {
         }, error: nil)
     }
     XCTAssertLessThanOrEqual(model.durationHints.count, 512)
+  }
+
+  func testQuitKeysWorkInEveryModeButAreTextWhileTyping() {
+    for mode in [ViewMode.player, .library, .catalog] {
+      var model = AppModel()
+      model.mode = mode
+      XCTAssertEqual(model.handle(.character("q")), .quitApplication)
+      _ = model.handle(.character("Q"))
+      XCTAssertEqual(
+        model.takePendingCommands(),
+        [PendingAppCommand(command: .quitMusic, message: "Quitting Music…", quitAfterSuccess: true)])
+    }
+
+    // While a search draft is focused, q is part of the query, not a quit.
+    var typing = AppModel()
+    typing.mode = .catalog
+    typing.catalogTyping = true
+    XCTAssertEqual(typing.handle(.character("q")), .continueRunning)
+    XCTAssertEqual(typing.catalogDraft, "q")
+    XCTAssertTrue(typing.takePendingCommands().isEmpty)
   }
 }
 

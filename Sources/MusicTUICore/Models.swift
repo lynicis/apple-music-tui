@@ -192,9 +192,3 @@ public func sameTrackTitle(_ left: String, _ right: String) -> Bool {
   let lhs = normalizeTitle(left)
   return !lhs.isEmpty && lhs == normalizeTitle(right)
 }
-
-public func trimLastCharacter(_ value: String) -> String {
-  var result = value
-  if !result.isEmpty { result.removeLast() }
-  return result
-}

@@ -1,7 +1,10 @@
-# apple-music-tui
+# Apple Music TUI
 
-![Platform](https://img.shields.io/badge/platform-macOS%2013%2B-blue)
-![Swift](https://img.shields.io/badge/swift-5.9%2B-orange)
+![macOS 13+](https://img.shields.io/badge/macOS-13%2B-000000?style=for-the-badge&logo=apple&logoColor=white)
+![Swift 5.9+](https://img.shields.io/badge/Swift-5.9%2B-F05138?style=for-the-badge&logo=swift&logoColor=white)
+![Apple Music](https://img.shields.io/badge/Apple%20Music-FA243C?style=for-the-badge&logo=applemusic&logoColor=white)
+![License: MIT](https://img.shields.io/badge/License-MIT-3DA639?style=for-the-badge)
+[![Latest release](https://img.shields.io/github/v/release/lynicis/apple-music-tui?style=for-the-badge&color=blueviolet&label=release)](https://github.com/lynicis/apple-music-tui/releases/latest)
 
 Manage Apple Music right from your terminal while you vibe code. Written in pure Swift.
 
@@ -46,6 +49,7 @@ Manage Apple Music right from your terminal while you vibe code. Written in pure
 
 - macOS 13 or newer with the Music app
 - Swift 5.9 or newer (Swift 6 is supported)
+- Apple Music
 - Automation permission for the terminal app running apple-music-tui
 
 The MediaRemote adapter used for streamed tracks is supplied by the `mediaremote-adapter` package dependency and built by SwiftPM, so no Homebrew install is required for it.
@@ -137,7 +141,6 @@ MUSICTUI_COUNTRY=US swift run apple-music-tui
 - **MediaRemote fills the gaps.** On macOS 15.4 and later MediaRemote is restricted to entitled processes, so AppleScript can stop returning track properties or playback timing for streamed tracks. For those cases apple-music-tui reads the system-wide now-playing session through the [`mediaremote-adapter`](https://github.com/ejbills/mediaremote-adapter) Swift package, which builds the adapter library and drives it through the system Perl interpreter (`/usr/bin/perl`). The `nowplaying-cli` executable is never invoked, and no Homebrew install is needed.
 - **The fallback is verified before use.** Because the adapter reports the system-wide session, the result is discarded unless it belongs to Music, and the track title must match the AppleScript title when one is available. Its timestamp-adjusted position is what lets reopening apple-music-tui mid-song resume at the real position instead of `0:00`.
 - **Timing is interpolated.** The display advances elapsed time between polls and deliberately does not reset the interpolation anchor when a stale sample repeats, so the progress bar keeps moving.
-- **Idle polling backs off.** Playback is polled once a second while something is playing or while you are typing, and every three seconds once a player is left paused and untouched, so an open window stops spawning `osascript` for no reason.
 - **Threading.** Input and rendering run on the main loop; every AppleScript, Perl, and network call runs on a worker queue and reports back through a mailbox. The main run loop is serviced between polls so the adapter's main-queue callbacks can run.
 - **Output.** Frames are written with POSIX `write` in a retry loop that handles `EINTR` and waits on `poll` for `EAGAIN`/`EWOULDBLOCK`, instead of using Foundation `FileHandle.write`. The frame is double-buffered: only rows that changed are retyped, each positioned and erased to end of line, so a shorter row can never leave a stale tail behind.
 
@@ -163,7 +166,7 @@ make run           # swift run apple-music-tui
 make clean         # swift package clean
 ```
 
-`make` with no target runs `test` and then `build`. The test suite covers terminal output backpressure, AppleScript response parsing, the MediaRemote snapshot mapping and validation, playlist/track search plumbing, volume and shuffle state handling, frame rendering and double-buffering, row truncation, and theme persistence (`swift test` runs 39 tests).
+`make` with no target runs `test` and then `build`. The test suite covers terminal output backpressure, AppleScript response parsing, the MediaRemote snapshot mapping and validation, playlist/track search plumbing, volume and shuffle state handling, frame rendering and double-buffering, and theme persistence (`swift test` runs 40 tests).
 
 Layout:
 
@@ -177,7 +180,7 @@ Sources/MusicTUICore/        model, terminal runtime, view, playback, catalog
   Theme.swift                colour themes and persistence
 Tests/MusicTUICoreTests/     XCTest suite
 demo/demo.cast               asciinema recording used in this README
-demo/demo.gif                rendered from that recording
+demo/demo.gif, demo/demo.mp4 rendered from that recording
 ```
 
 ## Acknowledgements

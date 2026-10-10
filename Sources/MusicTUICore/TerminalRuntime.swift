@@ -43,7 +43,7 @@ public final class TerminalRuntime {
             running = false
             return
           }
-          if model.handle(key, music: music, catalog: catalog) == .quitApplication {
+          if model.handle(key) == .quitApplication {
             running = false
           }
           needsRender = true
