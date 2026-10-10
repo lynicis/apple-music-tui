@@ -19,6 +19,7 @@ Manage Apple Music right from your terminal while you vibe code. Written in pure
 - [Features](#features)
 - [Requirements](#requirements)
 - [Installation](#installation)
+  - [Uninstall](#uninstall)
 - [Usage](#usage)
   - [Keyboard shortcuts](#keyboard-shortcuts)
   - [Themes](#themes)
@@ -85,7 +86,15 @@ sudo ln -sf "$PWD/.build/release/apple-music-tui" /usr/local/bin/apple-music-tui
 apple-music-tui
 ```
 
-The built binary needs `libMediaRemoteAdapter.dylib`, which SwiftPM leaves next to it in `.build/release`. If you copy the executable elsewhere, copy that library alongside it.
+The built binary needs `libMediaRemoteAdapter.dylib` and the `MediaRemoteAdapter_MediaRemoteAdapter.bundle` resource, which SwiftPM leaves next to it in `.build/release`. If you copy the executable elsewhere, copy both alongside it.
+
+### Uninstall
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/lynicis/apple-music-tui/master/uninstall.sh | bash
+```
+
+Removes the binary, `libMediaRemoteAdapter.dylib`, and the adapter's resource bundle from wherever the installer put them. Your Music library and the saved theme in `~/.config/apple-music-tui` are left in place.
 
 ## Usage
 
