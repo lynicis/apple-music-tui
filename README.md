@@ -177,7 +177,7 @@ Sources/MusicTUICore/        model, terminal runtime, view, playback, catalog
   Theme.swift                colour themes and persistence
 Tests/MusicTUICoreTests/     XCTest suite
 demo/demo.cast               asciinema recording used in this README
-demo/demo.gif, demo/demo.mp4 rendered from that recording
+demo/demo.gif                rendered from that recording
 ```
 
 ## Acknowledgements
