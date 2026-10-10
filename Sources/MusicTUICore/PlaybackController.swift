@@ -131,7 +131,10 @@ public final class AppleMusicController: MusicControlling {
   }
 
   /// Plays a song, preferring the user's own copy: a library track by persistent
-  /// ID, else a same-titled library match, else the catalog link. When Music
+  /// ID, else a same-titled library match, else the catalog link. After opening a
+  /// catalog link the Music app owns the item but the system-wide MediaRemote
+  /// session may still report a non-Music (Safari) session playing, so we only
+  /// treat the adapter as proof of playback when it clearly is Music. When Music
   /// ignores the catalog link we say so instead of reporting a false success.
   public func play(_ song: Song) throws {
     if !song.libraryID.isEmpty {
@@ -163,14 +166,10 @@ public final class AppleMusicController: MusicControlling {
     // releases, so ask MediaRemote before declaring failure. Timing is not
     // required here: a stream that just started may not expose its position or
     // duration yet, and confirming playback only needs the playing state.
-    if let remote = try? readMediaRemote(expectedTitle: song.name, requireTiming: false),
-      remote.playing
-    {
-      try? hideMusic()
-      return
-    }
-    // A catalog link loaded the page but playback never started, so ask
-    // MediaRemote whether anything is playing before giving up.
+    // The adapter reports the system-wide session, so a non-Music session
+    // (Safari, etc.) may be `playing` while Music is stopped. Don't treat that
+    // as a successful catalog playback: wait for the Music-side `playing`
+    // state, or MediaRemote only when the session is clearly Music.
     if let remote = try? readMediaRemote(expectedTitle: song.name, requireTiming: false),
       remote.playing
     {
