@@ -160,8 +160,20 @@ public final class AppleMusicController: MusicControlling {
       Thread.sleep(forTimeInterval: 0.3)
     }
     // AppleScript can report stale state for streamed tracks on recent macOS
-    // releases, so ask MediaRemote before declaring failure.
-    if let remote = try? readMediaRemote(expectedTitle: song.name), remote.playing {
+    // releases, so ask MediaRemote before declaring failure. Timing is not
+    // required here: a stream that just started may not expose its position or
+    // duration yet, and confirming playback only needs the playing state.
+    if let remote = try? readMediaRemote(expectedTitle: song.name, requireTiming: false),
+      remote.playing
+    {
+      try? hideMusic()
+      return
+    }
+    // A catalog link loaded the page but playback never started, so ask
+    // MediaRemote whether anything is playing before giving up.
+    if let remote = try? readMediaRemote(expectedTitle: song.name, requireTiming: false),
+      remote.playing
+    {
       try? hideMusic()
       return
     }
@@ -249,7 +261,9 @@ public final class AppleMusicController: MusicControlling {
   /// Reads the system-wide "now playing" session through the
   /// `mediaremote-adapter` package, which builds and ships the MediaRemote
   /// adapter library and its Perl bridge, so no Homebrew install is required.
-  private func readMediaRemote(expectedTitle: String) throws -> RemoteSnapshot {
+  private func readMediaRemote(expectedTitle: String, requireTiming: Bool = true) throws
+    -> RemoteSnapshot
+  {
     guard let payload = try fetchRemotePayload() else {
       throw MusicTUIError.invalidResponse("MediaRemote reported no active media session.")
     }
@@ -266,9 +280,11 @@ public final class AppleMusicController: MusicControlling {
       throw MusicTUIError.invalidResponse(
         reason.isEmpty ? "MediaRemote returned a different media session." : reason)
     }
-    guard snapshot.positionAvailable || snapshot.durationAvailable else {
-      throw MusicTUIError.invalidResponse(
-        "MediaRemote returned the matching track without timing fields.")
+    if requireTiming {
+      guard snapshot.positionAvailable || snapshot.durationAvailable else {
+        throw MusicTUIError.invalidResponse(
+          "MediaRemote returned the matching track without timing fields.")
+      }
     }
     return snapshot
   }

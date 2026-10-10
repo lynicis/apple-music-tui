@@ -126,8 +126,21 @@ enum AppleScript {
     #"tell application "Music" to play (first track of library playlist 1 whose persistent ID is "\#(escape(identifier))")"#
   }
 
+  /// Opens a catalog link and starts it. On recent macOS releases `open
+  /// location` only opens the item's page, so we explicitly start playback.
   static func openCatalog(_ url: String) -> String {
-    #"tell application "Music" to open location "\#(escape(url))""#
+    #"""
+    tell application "Music"
+        open location "\#(escape(url))"
+        delay 0.5
+        try
+            play
+        end try
+        try
+            play current track
+        end try
+    end tell
+    """#
   }
 
   private static func escape(_ value: String) -> String {

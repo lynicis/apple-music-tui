@@ -96,6 +96,14 @@ final class MusicTUICoreTests: XCTestCase {
     XCTAssertEqual(availableTime(0, available: true), "0:00")
   }
 
+  func testOpenCatalogAppleScriptStartsPlaybackAfterOpeningTheItem() {
+    let script = AppleScript.openCatalog("music://music.apple.com/us/album/x/1?i=2")
+    XCTAssertTrue(script.contains("open location"), "the catalog link must still be opened")
+    XCTAssertTrue(
+      script.contains("play"),
+      "opening a catalog link alone only shows its page on recent macOS, so playback must be started")
+  }
+
   func testMusicRunningAppleScriptUsesMultilineConditional() {
     let lines = AppleScript.musicRunning
       .components(separatedBy: .newlines)
