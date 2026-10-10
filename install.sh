@@ -6,6 +6,7 @@ set -euo pipefail
 REPO="lynicis/apple-music-tui"
 ASSET="apple-music-tui-macos-universal.tar.gz"
 SUMS="checksums.txt"
+BUNDLE="MediaRemoteAdapter_MediaRemoteAdapter.bundle"
 BASE="https://github.com/${REPO}/releases/latest/download"
 
 fail() { echo "apple-music-tui: $1" >&2; exit 1; }
@@ -44,10 +45,15 @@ fi
 echo "Checksum verified ($actual)."
 
 tar -xzf "$TMP/$ASSET" -C "$TMP" || fail "could not unpack $ASSET"
+[ -d "$TMP/$BUNDLE" ] || fail "$ASSET is missing $BUNDLE"
 
 mkdir -p "$INSTALL_DIR"
 install -m 755 "$TMP/apple-music-tui" "$INSTALL_DIR/apple-music-tui"
 install -m 644 "$TMP/libMediaRemoteAdapter.dylib" "$INSTALL_DIR/libMediaRemoteAdapter.dylib"
+# The adapter's SwiftPM resource bundle must sit next to the executable: the
+# generated Bundle.module accessor looks for it there and traps without it.
+rm -rf "$INSTALL_DIR/$BUNDLE"
+cp -R "$TMP/$BUNDLE" "$INSTALL_DIR/$BUNDLE"
 
 echo "Installed $INSTALL_DIR/apple-music-tui"
 case ":$PATH:" in
