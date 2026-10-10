@@ -1,6 +1,34 @@
 import Darwin
 import Foundation
 
+/// Double-buffers frames. It remembers the rows currently on screen and emits
+/// only the rows that changed, each positioned with an absolute cursor move and
+/// erased to end of line — so a row that got shorter cannot leave a stale tail,
+/// and unchanged rows are never retyped.
+struct FrameRenderer {
+  private var displayed: [String] = []
+  private var redrawAll = true
+
+  /// Drops the remembered frame so the next one repaints every row, e.g. when a
+  /// resize reflows the screen.
+  mutating func invalidate() { redrawAll = true }
+
+  mutating func encode(rows: [String]) -> Data {
+    var output = ""
+    // A resize can leave reflowed text below the frame; paint on a clean screen.
+    if redrawAll { output += "\u{001B}[2J" }
+    for index in 0..<max(rows.count, displayed.count) {
+      let row = index < rows.count ? rows[index] : ""
+      let shown = index < displayed.count ? displayed[index] : nil
+      if !redrawAll && row == shown { continue }
+      output += "\u{001B}[\(index + 1);1H\(row)\u{001B}[K"
+    }
+    displayed = rows
+    redrawAll = false
+    return Data(output.utf8)
+  }
+}
+
 /// Writes terminal frames using POSIX I/O instead of Foundation's FileHandle.
 /// FileHandle.write can raise an Objective-C exception when a nonblocking
 /// terminal temporarily returns EAGAIN; POSIX writes let us retry safely.

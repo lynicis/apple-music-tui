@@ -3,51 +3,13 @@
 ![Platform](https://img.shields.io/badge/platform-macOS%2013%2B-blue)
 ![Swift](https://img.shields.io/badge/swift-5.9%2B-orange)
 
-A macOS terminal interface for controlling and browsing Apple Music while keeping the Music window hidden. Written in Swift and packaged with Swift Package Manager — no Go runtime, no third-party terminal UI library.
+Manage Apple Music right from your terminal while you vibe code. Written in pure Swift.
 
 ---
 
 ## Demo
 
-The recorded session is checked in at [`docs/demo.cast`](docs/demo.cast). It walks through the player, the keyboard guide (below), and the four colour themes.
-
-```sh
-brew install asciinema
-asciinema play docs/demo.cast
-```
-
-To render it on GitHub, upload it once with `asciinema upload docs/demo.cast` and paste the returned embed tag here:
-
-```html
-<script async id="asciicast-XXXXXX" src="https://asciinema.org/a/XXXXXX.js"></script>
-```
-
-The keyboard guide, as captured in that recording:
-
-```text
-APPLE MUSIC    [ PLAYER ]
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-KEYBOARD CONTROLS
-Press ? or Esc to close this panel.
-PLAYER
-Space  Play or pause
-n / p, ← / →  Next / previous track
-f / b  Seek forward / back 10 seconds
-+ / -  Increase / decrease volume
-s  Toggle shuffle
-t  Cycle colour theme
-Tab / l  Open playlists
-/  Search the Apple Music catalog
-LIBRARY & DISCOVER
-t or /  Search your library tracks (in Library)
-j / k or arrows  Move selection
-Enter  Play selected track or playlist
-Esc  Back to playlists, cancel, or clear filter
-GLOBAL
-? or Esc  Close this help panel
-q  Exit apple-music-tui and leave Music playing
-Q  Quit Music and exit
-```
+![apple-music-tui: player view, keyboard guide, and the four colour themes](demo/demo.gif)
 
 ## Table of contents
 
@@ -90,7 +52,13 @@ The MediaRemote adapter used for streamed tracks is supplied by the `mediaremote
 
 ## Installation
 
-Build from source with Swift Package Manager:
+Install the latest release (Apple silicon):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/lynicis/apple-music-tui/main/install.sh | bash
+```
+
+Or build from source with Swift Package Manager:
 
 ```sh
 git clone https://github.com/lynicis/apple-music-tui.git
@@ -170,7 +138,7 @@ MUSICTUI_COUNTRY=US swift run apple-music-tui
 - **The fallback is verified before use.** Because the adapter reports the system-wide session, the result is discarded unless it belongs to Music, and the track title must match the AppleScript title when one is available. Its timestamp-adjusted position is what lets reopening apple-music-tui mid-song resume at the real position instead of `0:00`.
 - **Timing is interpolated.** The display advances elapsed time between polls and deliberately does not reset the interpolation anchor when a stale sample repeats, so the progress bar keeps moving.
 - **Threading.** Input and rendering run on the main loop; every AppleScript, Perl, and network call runs on a worker queue and reports back through a mailbox. The main run loop is serviced between polls so the adapter's main-queue callbacks can run.
-- **Output.** Frames are written with POSIX `write` in a retry loop that handles `EINTR` and waits on `poll` for `EAGAIN`/`EWOULDBLOCK`, instead of using Foundation `FileHandle.write`.
+- **Output.** Frames are written with POSIX `write` in a retry loop that handles `EINTR` and waits on `poll` for `EAGAIN`/`EWOULDBLOCK`, instead of using Foundation `FileHandle.write`. The frame is double-buffered: only rows that changed are retyped, each positioned and erased to end of line, so a shorter row can never leave a stale tail behind.
 
 MediaRemote relies on private macOS APIs and may change after OS updates. If neither source provides timing, apple-music-tui displays `--:--` rather than inventing a time.
 
@@ -194,7 +162,7 @@ make run           # swift run apple-music-tui
 make clean         # swift package clean
 ```
 
-`make` with no target runs `test` and then `build`. The test suite covers terminal output backpressure, AppleScript response parsing, the MediaRemote snapshot mapping and validation, playlist/track search plumbing, volume and shuffle state handling, and theme persistence (`swift test` runs 34 tests).
+`make` with no target runs `test` and then `build`. The test suite covers terminal output backpressure, AppleScript response parsing, the MediaRemote snapshot mapping and validation, playlist/track search plumbing, volume and shuffle state handling, frame rendering and double-buffering, and theme persistence (`swift test` runs 37 tests).
 
 Layout:
 
@@ -207,7 +175,8 @@ Sources/MusicTUICore/        model, terminal runtime, view, playback, catalog
   AppModel.swift             UI state and key handling
   Theme.swift                colour themes and persistence
 Tests/MusicTUICoreTests/     XCTest suite
-docs/demo.cast               asciinema recording used in this README
+demo/demo.cast               asciinema recording used in this README
+demo/demo.gif, demo/demo.mp4 rendered from that recording
 ```
 
 ## Acknowledgements

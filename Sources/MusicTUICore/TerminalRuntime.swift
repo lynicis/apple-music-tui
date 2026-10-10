@@ -6,7 +6,7 @@ public final class TerminalRuntime {
 
   public func run(music: MusicControlling, catalog: CatalogSearching) throws {
     guard isatty(STDIN_FILENO) == 1, isatty(STDOUT_FILENO) == 1 else {
-      throw MusicTUIError.commandFailed("apple-music-tu needs an interactive terminal.")
+      throw MusicTUIError.commandFailed("apple-music-tui needs an interactive terminal.")
     }
     let terminal = TerminalSession()
     try terminal.enter()
@@ -22,6 +22,8 @@ public final class TerminalRuntime {
 
     let mailbox = RuntimeEventMailbox()
     let workers = TerminalWorkers(mailbox: mailbox)
+    var renderer = FrameRenderer()
+    var screenSize = (columns: 0, rows: 0)
     var running = true
     var needsRender = true
     var lastRefresh = Date.distantPast
@@ -86,8 +88,11 @@ public final class TerminalRuntime {
         let dimensions = terminal.dimensions()
         model.width = dimensions.columns
         model.height = dimensions.rows
-        let frame = "\u{001B}[H\(TerminalView.render(model))\u{001B}[J"
-        try TerminalOutput.writeAll(Data(frame.utf8))
+        if dimensions.columns != screenSize.columns || dimensions.rows != screenSize.rows {
+          renderer.invalidate()
+          screenSize = dimensions
+        }
+        try TerminalOutput.writeAll(renderer.encode(rows: TerminalView.render(model)))
         needsRender = false
       }
 

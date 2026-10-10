@@ -285,7 +285,7 @@ final class MusicTUICoreTests: XCTestCase {
   func testRenderedHelpPanelContainsDismissShortcut() {
     var model = AppModel()
     model.helpVisible = true
-    let rendered = TerminalView.render(model)
+    let rendered = TerminalView.render(model).joined(separator: "\n")
     XCTAssertTrue(rendered.contains("KEYBOARD CONTROLS"))
     XCTAssertTrue(rendered.contains("Press ? or Esc to close this panel."))
   }
@@ -375,11 +375,42 @@ final class MusicTUICoreTests: XCTestCase {
     var model = AppModel()
     model.nowPlaying = NowPlaying(
       state: "playing", volume: 40, name: "Nocturne", artist: "Artist", album: "Piano Works")
-    let rendered = TerminalView.render(model)
+    let rendered = TerminalView.render(model).joined(separator: "\n")
     for glyph in ["╭", "╮", "╰", "╯", "│"] {
       XCTAssertFalse(rendered.contains(glyph), "grid glyph \(glyph) should be gone")
     }
-    XCTAssertTrue(rendered.contains("APPLE MUSIC"))
+    XCTAssertTrue(rendered.contains("\u{F8FF}  APPLE MUSIC"))
+  }
+
+  func testFrameRendererWritesEveryRowOnItsFirstFrame() {
+    var renderer = FrameRenderer()
+    let output = String(decoding: renderer.encode(rows: ["first", "second"]), as: UTF8.self)
+    XCTAssertEqual(output, "\u{001B}[2J\u{001B}[1;1Hfirst\u{001B}[K\u{001B}[2;1Hsecond\u{001B}[K")
+  }
+
+  func testFrameRendererRetypesOnlyChangedRowsAndErasesTheRest() {
+    var renderer = FrameRenderer()
+    _ = renderer.encode(rows: ["first", "second"])
+
+    // An identical frame must reach the terminal as nothing at all.
+    XCTAssertTrue(renderer.encode(rows: ["first", "second"]).isEmpty)
+
+    // A row that got shorter must be erased, and the untouched row left alone.
+    let shortened = String(decoding: renderer.encode(rows: ["first", "sec"]), as: UTF8.self)
+    XCTAssertEqual(shortened, "\u{001B}[2;1Hsec\u{001B}[K")
+
+    // A frame with fewer rows must clear the rows it no longer uses.
+    let dropped = String(decoding: renderer.encode(rows: ["first"]), as: UTF8.self)
+    XCTAssertEqual(dropped, "\u{001B}[2;1H\u{001B}[K")
+  }
+
+  func testFrameRendererRepaintsEverythingAfterInvalidation() {
+    var renderer = FrameRenderer()
+    _ = renderer.encode(rows: ["first", "second"])
+    renderer.invalidate()
+    XCTAssertEqual(
+      String(decoding: renderer.encode(rows: ["first", "second"]), as: UTF8.self),
+      "\u{001B}[2J\u{001B}[1;1Hfirst\u{001B}[K\u{001B}[2;1Hsecond\u{001B}[K")
   }
 
   func testRenderingUsesTheSelectedTheme() {
@@ -388,7 +419,7 @@ final class MusicTUICoreTests: XCTestCase {
         directory: URL(fileURLWithPath: NSTemporaryDirectory())
           .appendingPathComponent(UUID().uuidString)))
     model.theme = .mono
-    let rendered = TerminalView.render(model)
+    let rendered = TerminalView.render(model).joined(separator: "\n")
     XCTAssertTrue(rendered.contains("\u{001B}[4;97m"), "mono highlight should be used")
     XCTAssertFalse(rendered.contains("\u{001B}[36;1m"), "classic accent should be gone")
   }
@@ -457,7 +488,7 @@ final class MusicTUICoreTests: XCTestCase {
         Song(name: "Nocturne", artist: "Artist", album: "Piano Works", url: "", libraryID: "ID1")
       ], error: nil)
 
-    let rendered = TerminalView.render(model)
+    let rendered = TerminalView.render(model).joined(separator: "\n")
     XCTAssertTrue(rendered.contains("YOUR LIBRARY TRACKS"))
     XCTAssertTrue(rendered.contains("Nocturne — Artist"))
     XCTAssertTrue(rendered.contains("Found 1 library track(s)."))
@@ -490,9 +521,6 @@ final class MusicTUICoreTests: XCTestCase {
 private final class FakeMusicController: MusicControlling {
   var playPauseCount = 0
   var playlistsReadCount = 0
-  var playedSongs: [Song] = []
-  var libraryQueries: [String] = []
-  var libraryResults: [Song] = []
   func initialize() throws -> NowPlaying { NowPlaying(state: "paused") }
   func nowPlaying() throws -> NowPlaying { NowPlaying(state: "paused") }
   func playlists() throws -> [String] {
@@ -506,11 +534,8 @@ private final class FakeMusicController: MusicControlling {
   func seek(_ seconds: Int) throws {}
   func toggleShuffle() throws {}
   func playPlaylist(_ name: String) throws {}
-  func play(_ song: Song) throws { playedSongs.append(song) }
-  func searchLibrary(_ query: String) throws -> [Song] {
-    libraryQueries.append(query)
-    return libraryResults
-  }
+  func play(_ song: Song) throws {}
+  func searchLibrary(_ query: String) throws -> [Song] { [] }
   func quitMusic() throws {}
 }
 

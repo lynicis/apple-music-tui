@@ -1,7 +1,9 @@
 import Foundation
 
 public enum TerminalView {
-  public static func render(_ model: AppModel) -> String {
+  /// The frame as one string per screen row, ANSI-coloured and truncated to
+  /// `model.width`. Rows carry no newlines; `FrameRenderer` places them.
+  public static func render(_ model: AppModel) -> [String] {
     let width = max(48, model.width)
     let height = max(16, model.height)
     let contentWidth = clamp(width - 4, min: 38, max: 100)
@@ -13,7 +15,8 @@ public enum TerminalView {
     case .library: modeTitle = "LIBRARY"
     case .catalog: modeTitle = "DISCOVER"
     }
-    lines.append("\(color("APPLE MUSIC", theme.primary))    \(color("[ \(modeTitle) ]", theme.accent))")
+    // U+F8FF is Apple's logo glyph; it only renders on Apple system fonts.
+    lines.append("\(color("\u{F8FF}  APPLE MUSIC", theme.primary))    \(color("[ \(modeTitle) ]", theme.accent))")
     lines.append(color(String(repeating: "━", count: min(32, contentWidth)), theme.highlight))
     lines.append("")
 
@@ -35,7 +38,7 @@ public enum TerminalView {
     if lines.count > bodyLimit {
       lines = Array(lines.prefix(bodyLimit - 1)) + [color("… resize terminal for more details", theme.dim)]
     }
-    return lines.joined(separator: "\n") + "\n"
+    return lines
   }
 
   private static func playerView(_ model: AppModel, width: Int) -> [String] {
@@ -177,22 +180,10 @@ public enum TerminalView {
           model.trackSearching ? "Searching your library…" : "No library tracks match this search.",
           theme.dim))
     } else {
-      let maxRows = clamp(height - 15, min: 4, max: 17)
-      let start = clamp(
-        model.trackCursor - maxRows / 2, min: 0, max: max(0, model.tracks.count - maxRows))
-      let end = min(model.tracks.count, start + maxRows)
-      for index in start..<end {
-        let song = model.tracks[index]
-        let label = song.artist.isEmpty ? song.name : "\(song.name) — \(song.artist)"
-        let line = (index == model.trackCursor ? "› " : "  ") + truncate(label, width - 4)
-        lines.append(index == model.trackCursor ? color(line, theme.highlight) : line)
-        if index == model.trackCursor && !song.album.isEmpty {
-          lines.append("   \(color(truncate(song.album, width - 6), theme.dim))")
-        }
-      }
-      if model.tracks.count > maxRows {
-        lines.append(color("Showing \(start + 1)–\(end) of \(model.tracks.count) tracks", theme.dim))
-      }
+      lines.append(
+        contentsOf: songRows(
+          model.tracks, cursor: model.trackCursor, width: width, height: height, noun: "tracks",
+          theme: theme))
     }
     if !model.status.isEmpty && !model.trackSearching {
       lines.append(statusLine(model.status, width: width, theme: theme))
@@ -229,22 +220,10 @@ public enum TerminalView {
     } else if model.results.isEmpty {
       lines.append(color("Search by song, artist, or album.", theme.dim))
     } else {
-      let maxRows = clamp(height - 15, min: 4, max: 17)
-      let start = clamp(
-        model.resultCursor - maxRows / 2, min: 0, max: max(0, model.results.count - maxRows))
-      let end = min(model.results.count, start + maxRows)
-      for index in start..<end {
-        let song = model.results[index]
-        let label = song.artist.isEmpty ? song.name : "\(song.name) — \(song.artist)"
-        let line = (index == model.resultCursor ? "› " : "  ") + truncate(label, width - 4)
-        lines.append(index == model.resultCursor ? color(line, theme.highlight) : line)
-        if index == model.resultCursor && !song.album.isEmpty {
-          lines.append("   \(color(truncate(song.album, width - 6), theme.dim))")
-        }
-      }
-      if model.results.count > maxRows {
-        lines.append(color("Showing \(start + 1)–\(end) of \(model.results.count) results", theme.dim))
-      }
+      lines.append(
+        contentsOf: songRows(
+          model.results, cursor: model.resultCursor, width: width, height: height,
+          noun: "results", theme: theme))
     }
     if !model.status.isEmpty { lines.append(statusLine(model.status, width: width, theme: theme)) }
     lines.append("")
@@ -255,6 +234,31 @@ public enum TerminalView {
         hints(theme, ("j / k", "navigate"), ("ENTER", "play"), ("/", "edit"), ("ESC", "player"))
       )
       lines.append(hints(theme, ("?", "help"), ("q", "quit TUI"), ("Q", "quit Music")))
+    }
+    return lines
+  }
+
+  /// Renders the paged song list shared by the library-track and catalog views:
+  /// a window centred on the cursor, the selected row highlighted with an album
+  /// sub-line, and a "Showing a–b of n" footer.
+  private static func songRows(
+    _ songs: [Song], cursor: Int, width: Int, height: Int, noun: String, theme: Theme
+  ) -> [String] {
+    let maxRows = clamp(height - 15, min: 4, max: 17)
+    let start = clamp(cursor - maxRows / 2, min: 0, max: max(0, songs.count - maxRows))
+    let end = min(songs.count, start + maxRows)
+    var lines: [String] = []
+    for index in start..<end {
+      let song = songs[index]
+      let label = song.artist.isEmpty ? song.name : "\(song.name) — \(song.artist)"
+      let line = (index == cursor ? "› " : "  ") + truncate(label, width - 4)
+      lines.append(index == cursor ? color(line, theme.highlight) : line)
+      if index == cursor && !song.album.isEmpty {
+        lines.append("   \(color(truncate(song.album, width - 6), theme.dim))")
+      }
+    }
+    if songs.count > maxRows {
+      lines.append(color("Showing \(start + 1)–\(end) of \(songs.count) \(noun)", theme.dim))
     }
     return lines
   }
