@@ -4,6 +4,7 @@ public struct AppModel {
   public var nowPlaying = NowPlaying()
   public var musicError: String?
   public var status = ""
+  public var statusShownAt = Date.distantPast
   public var mode: ViewMode = .player
   public var width = 100
   public var height = 30
@@ -80,6 +81,7 @@ public struct AppModel {
     theme = Theme.all[index]
     themeStore.save(theme)
     status = "Theme: \(theme.name)"
+    statusShownAt = Date()
   }
 
   public mutating func applyLibrarySearchResult(query: String, songs: [Song]?, error: String?) {
@@ -135,6 +137,7 @@ public struct AppModel {
 
   public mutating func applyCommandResult(message: String, error: String?) {
     status = error.map { "Error: \($0)" } ?? message
+    statusShownAt = Date()
   }
 
   public mutating func takePendingCommands() -> [PendingAppCommand] {
