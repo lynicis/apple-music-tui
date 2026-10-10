@@ -5,7 +5,8 @@ set -euo pipefail
 
 REPO="lynicis/apple-music-tui"
 ASSET="apple-music-tui-macos-arm64.tar.gz"
-URL="https://github.com/${REPO}/releases/latest/download/${ASSET}"
+SUMS="checksums.txt"
+BASE="https://github.com/${REPO}/releases/latest/download"
 
 fail() { echo "apple-music-tui: $1" >&2; exit 1; }
 
@@ -25,7 +26,20 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 echo "Downloading apple-music-tui from the latest release…"
-curl -fsSL "$URL" -o "$TMP/$ASSET" || fail "download failed: $URL"
+curl -fsSL "$BASE/$ASSET" -o "$TMP/$ASSET" || fail "download failed: $BASE/$ASSET"
+curl -fsSL "$BASE/$SUMS" -o "$TMP/$SUMS" || fail "could not download $SUMS"
+
+expected="$(awk -v asset="$ASSET" '$2 == asset { print $1 }' "$TMP/$SUMS")"
+[ -n "$expected" ] || fail "no checksum published for $ASSET"
+actual="$(shasum -a 256 "$TMP/$ASSET" | awk '{ print $1 }')"
+if [ "$expected" != "$actual" ]; then
+  fail "checksum mismatch for $ASSET
+  expected $expected
+  actual   $actual
+Refusing to install a corrupted or tampered download."
+fi
+echo "Checksum verified ($actual)."
+
 tar -xzf "$TMP/$ASSET" -C "$TMP" || fail "could not unpack $ASSET"
 
 mkdir -p "$INSTALL_DIR"
