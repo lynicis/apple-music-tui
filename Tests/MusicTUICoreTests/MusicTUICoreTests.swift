@@ -516,6 +516,45 @@ final class MusicTUICoreTests: XCTestCase {
     XCTAssertEqual(results.count, 1)
     XCTAssertEqual(results[0].name, "Keep")
   }
+
+  func testOverlongTrackLabelsAreElidedToTheColumnWidth() {
+    var model = AppModel()
+    model.mode = .library
+    model.showingTracks = true
+    model.trackQuery = "Nocturne"
+    model.width = 100
+    model.applyLibrarySearchResult(
+      query: "Nocturne",
+      songs: [
+        Song(
+          name: String(repeating: "A", count: 200) + "END", artist: "", album: "", url: "",
+          libraryID: "ID1")
+      ], error: nil)
+
+    let rows = TerminalView.render(model).map {
+      $0.replacingOccurrences(of: #"\x1B\[[0-9;]*m"#, with: "", options: .regularExpression)
+    }
+    guard let row = rows.first(where: { $0.hasPrefix("› ") }) else {
+      return XCTFail("expected a selected track row")
+    }
+    // contentWidth is 96 here, so the label is elided to 92 columns after the cursor.
+    XCTAssertEqual(row.count, 94)
+    XCTAssertTrue(row.hasSuffix("…"), "elided rows must end with an ellipsis")
+    XCTAssertFalse(row.contains("END"), "elided rows must not run past the column")
+  }
+
+  func testDurationHintsStayBoundedAcrossManyCatalogSearches() {
+    var model = AppModel()
+    for page in 0..<30 {
+      model.catalogQuery = "query \(page)"
+      model.applyCatalogSearchResult(
+        query: "query \(page)",
+        songs: (0..<25).map {
+          Song(name: "Song \(page)-\($0)", artist: "Artist", album: "", url: "", duration: 200)
+        }, error: nil)
+    }
+    XCTAssertLessThanOrEqual(model.durationHints.count, 512)
+  }
 }
 
 private final class FakeMusicController: MusicControlling {

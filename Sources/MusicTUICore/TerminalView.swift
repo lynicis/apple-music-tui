@@ -303,23 +303,16 @@ public enum TerminalView {
     return color(truncate(value, width), isError ? theme.error : theme.highlight)
   }
 
+  /// Truncates plain text to `width` characters, ending with an ellipsis when it
+  /// does not fit. Every caller passes uncoloured text and colourises the result,
+  /// so there are no escape sequences to discount here.
   private static func truncate(_ value: String, _ width: Int) -> String {
     guard width > 0 else { return "" }
-    if visibleWidth(value) <= width { return value }
-    if width == 1 { return "…" }
-    var output = ""
-    for character in value {
-      if visibleWidth(output + String(character) + "…") > width { break }
-      output.append(character)
-    }
-    return output + "…"
+    guard value.count > width else { return value }
+    return String(value.prefix(width - 1)) + "…"
   }
 
   private static func color(_ value: String, _ code: String) -> String {
     "\u{001B}[\(code)m\(value)\u{001B}[0m"
-  }
-
-  private static func visibleWidth(_ value: String) -> Int {
-    value.replacingOccurrences(of: #"\x1B\[[0-9;]*m"#, with: "", options: .regularExpression).count
   }
 }

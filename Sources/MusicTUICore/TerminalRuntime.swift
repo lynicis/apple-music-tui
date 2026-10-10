@@ -27,73 +27,87 @@ public final class TerminalRuntime {
     var running = true
     var needsRender = true
     var lastRefresh = Date.distantPast
+    var lastActivity = Date()
 
     while running {
-      // Nothing that talks to Music or the network runs on this loop. Input and
-      // rendering stay responsive even when AppleScript or catalog requests stall.
-      if let raw = terminal.readKey() {
-        let key = InputKey(raw: raw)
-        if case .character("CTRL_C") = key { break }
-        if model.handle(key, music: music, catalog: catalog) == .quitApplication {
-          running = false
-        }
-        needsRender = true
-      }
-
-      for command in model.takePendingCommands() {
-        workers.execute(command, music: music, catalog: catalog)
-        needsRender = true
-      }
-
-      for event in mailbox.drain() {
-        switch event {
-        case .nowPlayingSuccess(let snapshot):
-          model.applyNowPlayingResult(snapshot, error: nil)
-          needsRender = true
-        case .nowPlayingFailure(let message):
-          model.applyNowPlayingResult(nil, error: message)
-          needsRender = true
-        case .playlistsSuccess(let playlists):
-          model.applyPlaylistResult(playlists, error: nil)
-          needsRender = true
-        case .playlistsFailure(let message):
-          model.applyPlaylistResult(nil, error: message)
-          needsRender = true
-        case .catalogSuccess(let query, let songs):
-          model.applyCatalogSearchResult(query: query, songs: songs, error: nil)
-          needsRender = true
-        case .catalogFailure(let query, let message):
-          model.applyCatalogSearchResult(query: query, songs: nil, error: message)
-          needsRender = true
-        case .librarySuccess(let query, let songs):
-          model.applyLibrarySearchResult(query: query, songs: songs, error: nil)
-          needsRender = true
-        case .libraryFailure(let query, let message):
-          model.applyLibrarySearchResult(query: query, songs: nil, error: message)
-          needsRender = true
-        case .commandFinished(let message, let error, let quitAfterSuccess):
-          model.applyCommandResult(message: message, error: error)
-          if error == nil && quitAfterSuccess { running = false }
+      // An explicit pool per pass: this loop outlives the program's only
+      // autorelease pool, so Foundation objects churned by input, rendering,
+      // AppleScript and MediaRemote replies would otherwise accumulate forever.
+      try autoreleasepool {
+        // Nothing that talks to Music or the network runs on this loop. Input and
+        // rendering stay responsive even when AppleScript or catalog requests stall.
+        if let raw = terminal.readKey() {
+          lastActivity = Date()
+          let key = InputKey(raw: raw)
+          if case .character("CTRL_C") = key {
+            running = false
+            return
+          }
+          if model.handle(key, music: music, catalog: catalog) == .quitApplication {
+            running = false
+          }
           needsRender = true
         }
-      }
 
-      let now = Date()
-      if now.timeIntervalSince(lastRefresh) >= 1 {
-        workers.refreshNowPlaying(music: music)
-        lastRefresh = now
-      }
-
-      if needsRender {
-        let dimensions = terminal.dimensions()
-        model.width = dimensions.columns
-        model.height = dimensions.rows
-        if dimensions.columns != screenSize.columns || dimensions.rows != screenSize.rows {
-          renderer.invalidate()
-          screenSize = dimensions
+        for command in model.takePendingCommands() {
+          workers.execute(command, music: music, catalog: catalog)
+          needsRender = true
         }
-        try TerminalOutput.writeAll(renderer.encode(rows: TerminalView.render(model)))
-        needsRender = false
+
+        for event in mailbox.drain() {
+          switch event {
+          case .nowPlayingSuccess(let snapshot):
+            model.applyNowPlayingResult(snapshot, error: nil)
+            needsRender = true
+          case .nowPlayingFailure(let message):
+            model.applyNowPlayingResult(nil, error: message)
+            needsRender = true
+          case .playlistsSuccess(let playlists):
+            model.applyPlaylistResult(playlists, error: nil)
+            needsRender = true
+          case .playlistsFailure(let message):
+            model.applyPlaylistResult(nil, error: message)
+            needsRender = true
+          case .catalogSuccess(let query, let songs):
+            model.applyCatalogSearchResult(query: query, songs: songs, error: nil)
+            needsRender = true
+          case .catalogFailure(let query, let message):
+            model.applyCatalogSearchResult(query: query, songs: nil, error: message)
+            needsRender = true
+          case .librarySuccess(let query, let songs):
+            model.applyLibrarySearchResult(query: query, songs: songs, error: nil)
+            needsRender = true
+          case .libraryFailure(let query, let message):
+            model.applyLibrarySearchResult(query: query, songs: nil, error: message)
+            needsRender = true
+          case .commandFinished(let message, let error, let quitAfterSuccess):
+            model.applyCommandResult(message: message, error: error)
+            if error == nil && quitAfterSuccess { running = false }
+            needsRender = true
+          }
+        }
+
+        // Poll once a second while playback is live or the user is typing, so the
+        // progress bar and command feedback stay fresh. An idle player backs off
+        // rather than spawning osascript every second to be told nothing moved.
+        let now = Date()
+        let live = model.nowPlaying.state == "playing" || now.timeIntervalSince(lastActivity) < 5
+        if now.timeIntervalSince(lastRefresh) >= (live ? 1 : 3) {
+          workers.refreshNowPlaying(music: music)
+          lastRefresh = now
+        }
+
+        if needsRender {
+          let dimensions = terminal.dimensions()
+          model.width = dimensions.columns
+          model.height = dimensions.rows
+          if dimensions.columns != screenSize.columns || dimensions.rows != screenSize.rows {
+            renderer.invalidate()
+            screenSize = dimensions
+          }
+          try TerminalOutput.writeAll(renderer.encode(rows: TerminalView.render(model)))
+          needsRender = false
+        }
       }
 
       // Service the main dispatch queue so the MediaRemote adapter's main-queue
@@ -314,14 +328,20 @@ private final class TerminalSession {
     return String(bytes: bytes, encoding: .utf8) ?? String(UnicodeScalar(first) ?? " ")
   }
 
+  /// Reads one byte. With no wait this is a plain non-blocking read, which is
+  /// what the idle event loop wants. When a wait is asked for (the follow-up
+  /// bytes of an escape sequence) it blocks in `poll` rather than sleeping and
+  /// re-reading in a loop, so waiting costs no wakeups and never overshoots.
   private func readByte(waitMilliseconds: Int = 0) -> Int? {
-    let deadline = Date().addingTimeInterval(Double(waitMilliseconds) / 1_000)
-    repeat {
-      var byte: UInt8 = 0
-      let count = Darwin.read(STDIN_FILENO, &byte, 1)
-      if count == 1 { return Int(byte) }
-      if waitMilliseconds == 0 || Date() >= deadline { return nil }
-      usleep(1_000)
-    } while true
+    if waitMilliseconds > 0 {
+      var descriptor = pollfd(fd: STDIN_FILENO, events: Int16(POLLIN), revents: 0)
+      var ready = poll(&descriptor, 1, Int32(waitMilliseconds))
+      while ready < 0 && errno == EINTR {
+        ready = poll(&descriptor, 1, Int32(waitMilliseconds))
+      }
+      guard ready > 0 else { return nil }
+    }
+    var byte: UInt8 = 0
+    return Darwin.read(STDIN_FILENO, &byte, 1) == 1 ? Int(byte) : nil
   }
 }

@@ -121,6 +121,9 @@ public struct AppModel {
       for song in songs where song.duration > 0 {
         durationHints[trackKey(name: song.name, artist: song.artist)] = song.duration
       }
+      // Hints are only a fallback for the track that is playing right now, so cap
+      // the map rather than letting a long session of searches grow it forever.
+      if durationHints.count > 512 { durationHints.removeAll(keepingCapacity: true) }
     } else {
       results = []
       status = "Catalog search failed: \(error ?? "Unknown error")"
