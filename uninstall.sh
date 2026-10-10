@@ -7,9 +7,13 @@ BINARY="apple-music-tui"
 LIBRARY="libMediaRemoteAdapter.dylib"
 BUNDLE="MediaRemoteAdapter_MediaRemoteAdapter.bundle"
 
-# The same locations install.sh writes to: an explicit override, else wherever
-# the binary actually landed.
-CANDIDATES=("${APPLE_MUSIC_TUI_INSTALL_DIR:-}" "$HOME/.local/bin" "/usr/local/bin")
+# An explicit override targets exactly one directory; otherwise remove from
+# both places install.sh may have used.
+if [ -n "${APPLE_MUSIC_TUI_INSTALL_DIR:-}" ]; then
+  CANDIDATES=("$APPLE_MUSIC_TUI_INSTALL_DIR")
+else
+  CANDIDATES=("$HOME/.local/bin" "/usr/local/bin")
+fi
 
 removed=0
 skipped=0
