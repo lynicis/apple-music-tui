@@ -55,36 +55,8 @@ public final class TerminalRuntime {
         }
 
         for event in mailbox.drain() {
-          switch event {
-          case .nowPlayingSuccess(let snapshot):
-            model.applyNowPlayingResult(snapshot, error: nil)
-            needsRender = true
-          case .nowPlayingFailure(let message):
-            model.applyNowPlayingResult(nil, error: message)
-            needsRender = true
-          case .playlistsSuccess(let playlists):
-            model.applyPlaylistResult(playlists, error: nil)
-            needsRender = true
-          case .playlistsFailure(let message):
-            model.applyPlaylistResult(nil, error: message)
-            needsRender = true
-          case .catalogSuccess(let query, let songs):
-            model.applyCatalogSearchResult(query: query, songs: songs, error: nil)
-            needsRender = true
-          case .catalogFailure(let query, let message):
-            model.applyCatalogSearchResult(query: query, songs: nil, error: message)
-            needsRender = true
-          case .librarySuccess(let query, let songs):
-            model.applyLibrarySearchResult(query: query, songs: songs, error: nil)
-            needsRender = true
-          case .libraryFailure(let query, let message):
-            model.applyLibrarySearchResult(query: query, songs: nil, error: message)
-            needsRender = true
-          case .commandFinished(let message, let error, let quitAfterSuccess):
-            model.applyCommandResult(message: message, error: error)
-            if error == nil && quitAfterSuccess { running = false }
-            needsRender = true
-          }
+          if model.apply(event) { running = false }
+          needsRender = true
         }
 
         // Poll once a second while playback is live or the user is typing, so the
@@ -97,14 +69,19 @@ public final class TerminalRuntime {
           lastRefresh = now
         }
 
+        // Re-read the window size every pass so a resize repaints within one
+        // loop turn. Reading it only when `needsRender` is already set would
+        // leave a resize invisible until the next keypress or poll event.
+        let dimensions = terminal.dimensions()
+        model.width = dimensions.columns
+        model.height = dimensions.rows
+        if dimensions.columns != screenSize.columns || dimensions.rows != screenSize.rows {
+          renderer.invalidate()
+          screenSize = dimensions
+          needsRender = true
+        }
+
         if needsRender {
-          let dimensions = terminal.dimensions()
-          model.width = dimensions.columns
-          model.height = dimensions.rows
-          if dimensions.columns != screenSize.columns || dimensions.rows != screenSize.rows {
-            renderer.invalidate()
-            screenSize = dimensions
-          }
           try TerminalOutput.writeAll(renderer.encode(rows: TerminalView.render(model)))
           needsRender = false
         }
@@ -116,6 +93,31 @@ public final class TerminalRuntime {
     }
   }
 
+}
+
+extension AppModel {
+  /// Applies a drained worker event, returning true when it asks the app to
+  /// quit (a completed `Q`). Keeps the runtime loop's body about the loop.
+  fileprivate mutating func apply(_ event: RuntimeEvent) -> Bool {
+    switch event {
+    case .nowPlayingSuccess(let snapshot): applyNowPlayingResult(snapshot, error: nil)
+    case .nowPlayingFailure(let message): applyNowPlayingResult(nil, error: message)
+    case .playlistsSuccess(let playlists): applyPlaylistResult(playlists, error: nil)
+    case .playlistsFailure(let message): applyPlaylistResult(nil, error: message)
+    case .catalogSuccess(let query, let songs):
+      applyCatalogSearchResult(query: query, songs: songs, error: nil)
+    case .catalogFailure(let query, let message):
+      applyCatalogSearchResult(query: query, songs: nil, error: message)
+    case .librarySuccess(let query, let songs):
+      applyLibrarySearchResult(query: query, songs: songs, error: nil)
+    case .libraryFailure(let query, let message):
+      applyLibrarySearchResult(query: query, songs: nil, error: message)
+    case .commandFinished(let message, let error, let quitAfterSuccess):
+      applyCommandResult(message: message, error: error)
+      return error == nil && quitAfterSuccess
+    }
+    return false
+  }
 }
 
 private enum RuntimeEvent {

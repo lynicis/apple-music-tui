@@ -2,69 +2,10 @@ import Foundation
 import MediaRemoteAdapter
 
 public final class AppleMusicController: MusicControlling {
-  static let musicRunningScript = #"""
-    if application "Music" is running then
-        return "true"
-    else
-        return "false"
-    end if
-    """#
-
-  private let nowPlayingScript = #"""
-    if application "Music" is not running then return "notrunning"
-    tell application "Music"
-        set fieldSep to (ASCII character 31)
-        set stateText to "stopped"
-        set volValue to 0
-        set shuffleText to "false"
-        set trackTitle to ""
-        set trackArtist to ""
-        set trackAlbum to ""
-        set posText to ""
-        set posAvailable to "false"
-        set durText to ""
-        set durAvailable to "false"
-        set formattedDuration to ""
-        try
-            set stateText to (player state as string)
-        end try
-        try
-            set volValue to sound volume
-        end try
-        try
-            set shuffleText to (shuffle enabled as string)
-        end try
-        try
-            set curTrack to current track
-            try
-                set trackTitle to (name of curTrack)
-            end try
-            try
-                set trackArtist to (artist of curTrack)
-            end try
-            try
-                set trackAlbum to (album of curTrack)
-            end try
-            try
-                set durText to (duration of curTrack as text)
-                set durAvailable to "true"
-            end try
-            try
-                set formattedDuration to (time of curTrack as text)
-            end try
-        end try
-        try
-            set posText to (player position as text)
-            set posAvailable to "true"
-        end try
-        return stateText & fieldSep & volValue & fieldSep & shuffleText & fieldSep & trackTitle & fieldSep & trackArtist & fieldSep & trackAlbum & fieldSep & posText & fieldSep & posAvailable & fieldSep & durText & fieldSep & durAvailable & fieldSep & formattedDuration
-    end tell
-    """#
-
   public init() {}
 
   public func initialize() throws -> NowPlaying {
-    let running = try runAppleScript(Self.musicRunningScript)
+    let running = try runAppleScript(AppleScript.musicRunning)
     if running != "true" {
       _ = try runProcess("/usr/bin/open", arguments: ["-gj", "-a", "Music"])
     }
@@ -89,7 +30,7 @@ public final class AppleMusicController: MusicControlling {
   }
 
   public func nowPlaying() throws -> NowPlaying {
-    var current = try Self.parseNowPlayingResponse(runAppleScript(nowPlayingScript))
+    var current = try Self.parseNowPlayingResponse(runAppleScript(AppleScript.nowPlaying))
     guard current.state != "notrunning" else { return current }
 
     let needsRemote =
@@ -134,49 +75,30 @@ public final class AppleMusicController: MusicControlling {
   }
 
   public func playlists() throws -> [String] {
-    let script = #"""
-      if application "Music" is not running then return ""
-      tell application "Music"
-          set oldDelimiters to AppleScript's text item delimiters
-          set AppleScript's text item delimiters to (ASCII character 30)
-          set playlistNames to (name of every user playlist) as text
-          set AppleScript's text item delimiters to oldDelimiters
-          return playlistNames
-      end tell
-      """#
-    return try runAppleScript(script)
+    return try runAppleScript(AppleScript.playlists)
       .components(separatedBy: "\u{1E}")
       .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
       .filter { !$0.isEmpty }
   }
 
-  public func playPause() throws { try perform(#"tell application "Music" to playpause"#) }
-  public func next() throws { try perform(#"tell application "Music" to next track"#) }
-  public func previous() throws { try perform(#"tell application "Music" to previous track"#) }
+  public func playPause() throws { try perform(AppleScript.playPause) }
+  public func next() throws { try perform(AppleScript.next) }
+  public func previous() throws { try perform(AppleScript.previous) }
 
   public func setVolume(_ volume: Int) throws {
-    try perform(
-      #"tell application "Music" to set sound volume to \#(clamp(volume, min: 0, max: 100))"#)
+    try perform(AppleScript.setVolume(volume))
   }
 
   public func seek(_ seconds: Int) throws {
-    let script = #"""
-      tell application "Music"
-          set targetPosition to (player position) + (\#(seconds))
-          if targetPosition < 0 then set targetPosition to 0
-          set player position to targetPosition
-      end tell
-      """#
-    try perform(script)
+    try perform(AppleScript.seek(by: seconds))
   }
 
   public func toggleShuffle() throws {
-    try perform(#"tell application "Music" to set shuffle enabled to not shuffle enabled"#)
+    try perform(AppleScript.toggleShuffle)
   }
 
   public func playPlaylist(_ name: String) throws {
-    try perform(
-      #"tell application "Music" to play user playlist "\#(Self.escapeAppleScript(name))""#)
+    try perform(AppleScript.playPlaylist(name))
   }
 
   /// Searches the user's library by track, artist, or album name. Results come
@@ -184,24 +106,7 @@ public final class AppleMusicController: MusicControlling {
   public func searchLibrary(_ query: String) throws -> [Song] {
     let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !term.isEmpty else { return [] }
-    let script = #"""
-      if application "Music" is not running then return ""
-      tell application "Music"
-          set queryText to "\#(Self.escapeAppleScript(term))"
-          set matches to (tracks of library playlist 1 whose name contains queryText or artist contains queryText or album contains queryText)
-          set total to (count of matches)
-          if total > 25 then set total to 25
-          set fieldSep to (ASCII character 31)
-          set rowSep to (ASCII character 30)
-          set output to ""
-          repeat with index from 1 to total
-              set entry to item index of matches
-              set output to output & (name of entry) & fieldSep & (artist of entry) & fieldSep & (album of entry) & fieldSep & (persistent ID of entry) & rowSep
-          end repeat
-          return output
-      end tell
-      """#
-    return Self.parseLibrarySearchRows(try runAppleScript(script))
+    return Self.parseLibrarySearchRows(try runAppleScript(AppleScript.searchLibrary(term)))
   }
 
   public static func parseLibrarySearchRows(_ output: String) -> [Song] {
@@ -222,9 +127,7 @@ public final class AppleMusicController: MusicControlling {
     guard !identifier.isEmpty else {
       throw MusicTUIError.invalidResponse("Missing library track identifier.")
     }
-    try perform(
-      #"tell application "Music" to play (first track of library playlist 1 whose persistent ID is "\#(Self.escapeAppleScript(identifier))")"#
-    )
+    try perform(AppleScript.playLibraryTrack(identifier))
   }
 
   /// Plays a song, preferring the user's own copy: a library track by persistent
@@ -270,7 +173,7 @@ public final class AppleMusicController: MusicControlling {
   }
 
   private func currentPlayerState() -> String {
-    let output = try? runAppleScript(#"tell application "Music" to return (player state as string)"#)
+    let output = try? runAppleScript(AppleScript.playerState)
     return output?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
   }
 
@@ -284,12 +187,11 @@ public final class AppleMusicController: MusicControlling {
     components.scheme = "music"
     components.queryItems = components.queryItems?.filter { $0.name != "uo" }
     guard let musicURL = components.string else { throw MusicTUIError.invalidCatalogURL }
-    try perform(
-      #"tell application "Music" to open location "\#(Self.escapeAppleScript(musicURL))""#)
+    try perform(AppleScript.openCatalog(musicURL))
   }
 
   public func quitMusic() throws {
-    _ = try runAppleScript(#"tell application "Music" to quit"#)
+    _ = try runAppleScript(AppleScript.quitMusic)
   }
 
   private func perform(_ script: String) throws {
@@ -299,10 +201,9 @@ public final class AppleMusicController: MusicControlling {
 
   private func hideMusic() throws {
     do {
-      _ = try runAppleScript(
-        #"tell application "System Events" to set visible of process "Music" to false"#)
+      _ = try runAppleScript(AppleScript.hideMusic)
     } catch {
-      _ = try runAppleScript(#"tell application "Music" to close every window"#)
+      _ = try runAppleScript(AppleScript.closeMusicWindows)
     }
   }
 
@@ -499,7 +400,4 @@ public final class AppleMusicController: MusicControlling {
       ? values[0] * 60 + values[1] : values[0] * 3600 + values[1] * 60 + values[2]
   }
 
-  private static func escapeAppleScript(_ value: String) -> String {
-    value.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
-  }
 }

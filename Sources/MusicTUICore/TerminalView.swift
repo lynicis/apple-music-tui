@@ -131,18 +131,15 @@ public enum TerminalView {
           model.playlistFilter.isEmpty
             ? "No user playlists found." : "No playlists match this search.", theme.dim))
     } else {
-      let maxRows = clamp(height - 15, min: 4, max: 17)
-      let start = clamp(
-        model.playlistCursor - maxRows / 2, min: 0, max: max(0, items.count - maxRows))
-      let end = min(items.count, start + maxRows)
-      for index in start..<end {
+      let window = pageWindow(count: items.count, cursor: model.playlistCursor, height: height)
+      for index in window.start..<window.end {
         let prefix = index == model.playlistCursor ? "› " : "  "
         let item = truncate(items[index], width - 4)
         lines.append(
           index == model.playlistCursor ? color(prefix + item, theme.highlight) : prefix + item)
       }
-      if items.count > maxRows {
-        lines.append(color("Showing \(start + 1)–\(end) of \(items.count)", theme.dim))
+      if items.count > window.rows {
+        lines.append(color("Showing \(window.start + 1)–\(window.end) of \(items.count)", theme.dim))
       }
     }
     if !model.status.isEmpty && !model.playlistsLoading {
@@ -244,11 +241,9 @@ public enum TerminalView {
   private static func songRows(
     _ songs: [Song], cursor: Int, width: Int, height: Int, noun: String, theme: Theme
   ) -> [String] {
-    let maxRows = clamp(height - 15, min: 4, max: 17)
-    let start = clamp(cursor - maxRows / 2, min: 0, max: max(0, songs.count - maxRows))
-    let end = min(songs.count, start + maxRows)
+    let window = pageWindow(count: songs.count, cursor: cursor, height: height)
     var lines: [String] = []
-    for index in start..<end {
+    for index in window.start..<window.end {
       let song = songs[index]
       let label = song.artist.isEmpty ? song.name : "\(song.name) — \(song.artist)"
       let line = (index == cursor ? "› " : "  ") + truncate(label, width - 4)
@@ -257,10 +252,21 @@ public enum TerminalView {
         lines.append("   \(color(truncate(song.album, width - 6), theme.dim))")
       }
     }
-    if songs.count > maxRows {
-      lines.append(color("Showing \(start + 1)–\(end) of \(songs.count) \(noun)", theme.dim))
+    if songs.count > window.rows {
+      lines.append(color("Showing \(window.start + 1)–\(window.end) of \(songs.count) \(noun)", theme.dim))
     }
     return lines
+  }
+
+  /// The visible slice of `count` items: a window of rows centred on `cursor`
+  /// and sized to the terminal. Shared by the playlist list and the song lists
+  /// so every paged view scrolls and reports "Showing a–b of n" the same way.
+  private static func pageWindow(count: Int, cursor: Int, height: Int) -> (
+    start: Int, end: Int, rows: Int
+  ) {
+    let rows = clamp(height - 15, min: 4, max: 17)
+    let start = clamp(cursor - rows / 2, min: 0, max: max(0, count - rows))
+    return (start, min(count, start + rows), rows)
   }
 
   private static func helpView(_ theme: Theme) -> [String] {

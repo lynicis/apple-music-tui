@@ -97,7 +97,7 @@ final class MusicTUICoreTests: XCTestCase {
   }
 
   func testMusicRunningAppleScriptUsesMultilineConditional() {
-    let lines = AppleMusicController.musicRunningScript
+    let lines = AppleScript.musicRunning
       .components(separatedBy: .newlines)
       .map { $0.trimmingCharacters(in: .whitespaces) }
 

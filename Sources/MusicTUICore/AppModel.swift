@@ -269,6 +269,17 @@ public struct AppModel {
     enqueue(.setVolume(volume), message: "Setting volume to \(volume)%…")
   }
 
+  /// Applies one keystroke to a search draft: backspace deletes, space and
+  /// printable characters append. Returns nil for keys the caller handles
+  /// itself, so the three typing modes share a single edit rule.
+  private static func editedDraft(_ key: String, from draft: String) -> String? {
+    switch key {
+    case "BACKSPACE": return trimLastCharacter(draft)
+    case " ": return draft + " "
+    default: return key.count == 1 ? draft + key : nil
+    }
+  }
+
   private mutating func handleLibrary(_ key: String, music: MusicControlling) -> KeyAction {
     if trackTyping {
       switch key {
@@ -288,9 +299,7 @@ public struct AppModel {
         status = "Searching your library…"
         pendingCommands.append(
           PendingAppCommand(command: .searchLibrary(query), message: status))
-      case "BACKSPACE": trackDraft = trimLastCharacter(trackDraft)
-      case " ": trackDraft += " "
-      default: if key.count == 1 { trackDraft += key }
+      default: if let edited = Self.editedDraft(key, from: trackDraft) { trackDraft = edited }
       }
       return .continueRunning
     }
@@ -304,9 +313,7 @@ public struct AppModel {
         playlistTyping = false
         playlistCursor = 0
         status = "\(filteredPlaylists.count) playlist(s) match."
-      case "BACKSPACE": playlistDraft = trimLastCharacter(playlistDraft)
-      case " ": playlistDraft += " "
-      default: if key.count == 1 { playlistDraft += key }
+      default: if let edited = Self.editedDraft(key, from: playlistDraft) { playlistDraft = edited }
       }
       return .continueRunning
     }
@@ -398,10 +405,8 @@ public struct AppModel {
         status = "Searching the Apple Music catalog…"
         pendingCommands.append(
           PendingAppCommand(command: .searchCatalog(query), message: status))
-      case "BACKSPACE": catalogDraft = trimLastCharacter(catalogDraft)
-      case " ": catalogDraft += " "
       case "DOWN": if !results.isEmpty { catalogTyping = false }
-      default: if key.count == 1 { catalogDraft += key }
+      default: if let edited = Self.editedDraft(key, from: catalogDraft) { catalogDraft = edited }
       }
       return .continueRunning
     }
