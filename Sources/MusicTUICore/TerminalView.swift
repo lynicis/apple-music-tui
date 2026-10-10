@@ -1,0 +1,321 @@
+import Foundation
+
+public enum TerminalView {
+  public static func render(_ model: AppModel) -> String {
+    let width = max(48, model.width)
+    let height = max(16, model.height)
+    let contentWidth = clamp(width - 4, min: 38, max: 100)
+    let theme = model.theme
+    var lines: [String] = []
+    let modeTitle: String
+    switch model.mode {
+    case .player: modeTitle = "PLAYER"
+    case .library: modeTitle = "LIBRARY"
+    case .catalog: modeTitle = "DISCOVER"
+    }
+    lines.append("\(color("APPLE MUSIC", theme.primary))    \(color("[ \(modeTitle) ]", theme.accent))")
+    lines.append(color(String(repeating: "━", count: min(32, contentWidth)), theme.highlight))
+    lines.append("")
+
+    if model.helpVisible {
+      lines.append(contentsOf: helpView(theme))
+    } else {
+      switch model.mode {
+      case .player: lines.append(contentsOf: playerView(model, width: contentWidth))
+      case .library:
+        lines.append(contentsOf: libraryView(model, width: contentWidth, height: height))
+      case .catalog:
+        lines.append(contentsOf: catalogView(model, width: contentWidth, height: height))
+      }
+    }
+
+    // Keep the display stable and prevent a very short terminal from flooding
+    // a large amount of output; a normal terminal still displays the full view.
+    let bodyLimit = max(8, height - 3)
+    if lines.count > bodyLimit {
+      lines = Array(lines.prefix(bodyLimit - 1)) + [color("… resize terminal for more details", theme.dim)]
+    }
+    return lines.joined(separator: "\n") + "\n"
+  }
+
+  private static func playerView(_ model: AppModel, width: Int) -> [String] {
+    let theme = model.theme
+    var lines: [String] = []
+    if let error = model.musicError {
+      lines.append(color("CONNECTION ERROR", theme.error))
+      lines.append(truncate(error, width))
+      lines.append(color("Check macOS Automation permissions for apple-music-tui.", theme.dim))
+    } else if model.nowPlaying.state == "notrunning" {
+      lines.append(color("Starting Music in the background…", theme.dim))
+    } else if model.nowPlaying.name.isEmpty {
+      lines.append(color("NOTHING PLAYING", theme.accent))
+      lines.append(color("Press Tab to browse playlists or / to discover music.", theme.dim))
+    } else {
+      let state = model.nowPlaying.state
+      let label =
+        state == "playing" ? "NOW PLAYING" : state == "paused" ? "PAUSED" : state.uppercased()
+      let indicator = state == "playing" ? "▶" : state == "paused" ? "Ⅱ" : "●"
+      lines.append(color(label, theme.accent))
+      lines.append(color(truncate("\(indicator)  \(model.nowPlaying.name)", width), theme.primary))
+      if !model.nowPlaying.artist.isEmpty { lines.append(truncate(model.nowPlaying.artist, width)) }
+      if !model.nowPlaying.album.isEmpty {
+        lines.append(color(truncate(model.nowPlaying.album, width), theme.dim))
+      }
+      lines.append("")
+
+      let durationAvailable = model.nowPlaying.durationAvailable && model.nowPlaying.duration > 0
+      var positionAvailable = model.nowPlaying.positionAvailable
+      if !durationAvailable && state == "playing" && model.nowPlaying.position == 0 {
+        positionAvailable = false
+      }
+      let elapsed = availableTime(model.nowPlaying.position, available: positionAvailable)
+      let duration = availableTime(model.nowPlaying.duration, available: durationAvailable)
+      let barWidth = clamp(width - 28, min: 12, max: 38)
+      let filled =
+        durationAvailable
+        ? clamp(
+          model.nowPlaying.position * barWidth / max(1, model.nowPlaying.duration), min: 0,
+          max: barWidth) : 0
+      let bar =
+        color(String(repeating: "━", count: filled), theme.highlight)
+        + color(String(repeating: "─", count: barWidth - filled), theme.dim)
+      lines.append("\(color(elapsed, theme.primary))  \(bar)  \(color(duration, theme.dim))")
+      if !positionAvailable || !durationAvailable {
+        lines.append(color("Playback timing is unavailable.", theme.dim))
+        if !model.nowPlaying.timingDiagnostic.isEmpty {
+          lines.append(
+            color(truncate("Timing fallback: \(model.nowPlaying.timingDiagnostic)", width), theme.dim))
+        } else {
+          lines.append(color("MediaRemote is not reporting live timing.", theme.dim))
+        }
+      } else if model.nowPlaying.timingSource == "MediaRemote library" {
+        lines.append(color("Live timing · MediaRemote", theme.dim))
+      }
+    }
+
+    let shuffle = model.nowPlaying.shuffle ? "On" : "Off"
+    lines.append("")
+    lines.append(
+      "\(color(" VOL \(model.nowPlaying.volume)% ", theme.accent))   \(color(" SHUFFLE \(shuffle) ", theme.accent))"
+    )
+    if !model.status.isEmpty { lines.append(statusLine(model.status, width: width, theme: theme)) }
+    lines.append("")
+    lines.append(
+      hints(theme, ("?", "help"), ("t", "theme: \(theme.name)"), ("q", "quit TUI"), ("Q", "quit Music")))
+    return lines
+  }
+
+  private static func libraryView(_ model: AppModel, width: Int, height: Int) -> [String] {
+    guard !model.showingTracks else { return trackListView(model, width: width, height: height) }
+    let theme = model.theme
+    var lines = [color("YOUR PLAYLISTS", theme.accent)]
+    if model.playlistTyping {
+      lines.append(color("/ \(model.playlistDraft)▏", theme.highlight))
+    } else if !model.playlistFilter.isEmpty {
+      lines.append("\(color("FILTER  ", theme.dim))\(color(model.playlistFilter, theme.primary))")
+    } else {
+      lines.append(color("Press / to filter playlists by name.", theme.dim))
+    }
+    lines.append("")
+    let items = model.filteredPlaylists
+    if model.playlistsLoading {
+      lines.append(color("Loading your library…", theme.dim))
+    } else if !model.playlistsLoaded && !model.status.isEmpty {
+      lines.append(color("Playlist data is unavailable.", theme.dim))
+    } else if items.isEmpty {
+      lines.append(
+        color(
+          model.playlistFilter.isEmpty
+            ? "No user playlists found." : "No playlists match this search.", theme.dim))
+    } else {
+      let maxRows = clamp(height - 15, min: 4, max: 17)
+      let start = clamp(
+        model.playlistCursor - maxRows / 2, min: 0, max: max(0, items.count - maxRows))
+      let end = min(items.count, start + maxRows)
+      for index in start..<end {
+        let prefix = index == model.playlistCursor ? "› " : "  "
+        let item = truncate(items[index], width - 4)
+        lines.append(
+          index == model.playlistCursor ? color(prefix + item, theme.highlight) : prefix + item)
+      }
+      if items.count > maxRows {
+        lines.append(color("Showing \(start + 1)–\(end) of \(items.count)", theme.dim))
+      }
+    }
+    if !model.status.isEmpty && !model.playlistsLoading {
+      lines.append(statusLine(model.status, width: width, theme: theme))
+    }
+    lines.append("")
+    if model.playlistTyping {
+      lines.append(hints(theme, ("TYPE", "filter"), ("ENTER", "apply"), ("ESC", "cancel")))
+    } else {
+      lines.append(
+        hints(theme, ("j / k", "navigate"), ("ENTER", "play"), ("/", "search"), ("t", "tracks"), ("ESC", "back"))
+      )
+      lines.append(hints(theme, ("?", "help"), ("TAB / l", "player"), ("q", "quit")))
+    }
+    return lines
+  }
+
+  private static func trackListView(_ model: AppModel, width: Int, height: Int) -> [String] {
+    let theme = model.theme
+    var lines = [color("YOUR LIBRARY TRACKS", theme.accent)]
+    if model.trackTyping {
+      lines.append(color("/ \(model.trackDraft)▏", theme.highlight))
+    } else if model.trackSearching {
+      lines.append(color("Searching your library…", theme.dim))
+    } else if !model.trackQuery.isEmpty {
+      lines.append("\(color("SEARCH  ", theme.dim))\(color(model.trackQuery, theme.primary))")
+    } else {
+      lines.append(color("Press / to search your library by track, artist, or album.", theme.dim))
+    }
+    lines.append("")
+
+    if model.tracks.isEmpty {
+      lines.append(
+        color(
+          model.trackSearching ? "Searching your library…" : "No library tracks match this search.",
+          theme.dim))
+    } else {
+      let maxRows = clamp(height - 15, min: 4, max: 17)
+      let start = clamp(
+        model.trackCursor - maxRows / 2, min: 0, max: max(0, model.tracks.count - maxRows))
+      let end = min(model.tracks.count, start + maxRows)
+      for index in start..<end {
+        let song = model.tracks[index]
+        let label = song.artist.isEmpty ? song.name : "\(song.name) — \(song.artist)"
+        let line = (index == model.trackCursor ? "› " : "  ") + truncate(label, width - 4)
+        lines.append(index == model.trackCursor ? color(line, theme.highlight) : line)
+        if index == model.trackCursor && !song.album.isEmpty {
+          lines.append("   \(color(truncate(song.album, width - 6), theme.dim))")
+        }
+      }
+      if model.tracks.count > maxRows {
+        lines.append(color("Showing \(start + 1)–\(end) of \(model.tracks.count) tracks", theme.dim))
+      }
+    }
+    if !model.status.isEmpty && !model.trackSearching {
+      lines.append(statusLine(model.status, width: width, theme: theme))
+    }
+    lines.append("")
+    if model.trackTyping {
+      lines.append(hints(theme, ("TYPE", "query"), ("ENTER", "search"), ("ESC", "cancel")))
+    } else {
+      lines.append(
+        hints(theme, ("j / k", "navigate"), ("ENTER", "play"), ("/", "search"), ("ESC", "playlists"))
+      )
+      lines.append(hints(theme, ("?", "help"), ("TAB / l", "player"), ("q", "quit")))
+    }
+    return lines
+  }
+
+  private static func catalogView(_ model: AppModel, width: Int, height: Int) -> [String] {
+    let theme = model.theme
+    var lines = [
+      color("DISCOVER MUSIC", theme.accent),
+      color("Search Apple's catalog, including songs outside your library.", theme.dim),
+    ]
+    if model.catalogTyping {
+      lines.append(color("⌕  \(model.catalogDraft)▏", theme.highlight))
+    } else if !model.catalogQuery.isEmpty {
+      lines.append(color("⌕  \(model.catalogQuery)", theme.primary))
+    } else {
+      lines.append(color("Press / to enter a search.", theme.dim))
+    }
+    lines.append("")
+
+    if model.catalogSearching {
+      lines.append(color("Searching the Apple Music catalog…", theme.dim))
+    } else if model.results.isEmpty {
+      lines.append(color("Search by song, artist, or album.", theme.dim))
+    } else {
+      let maxRows = clamp(height - 15, min: 4, max: 17)
+      let start = clamp(
+        model.resultCursor - maxRows / 2, min: 0, max: max(0, model.results.count - maxRows))
+      let end = min(model.results.count, start + maxRows)
+      for index in start..<end {
+        let song = model.results[index]
+        let label = song.artist.isEmpty ? song.name : "\(song.name) — \(song.artist)"
+        let line = (index == model.resultCursor ? "› " : "  ") + truncate(label, width - 4)
+        lines.append(index == model.resultCursor ? color(line, theme.highlight) : line)
+        if index == model.resultCursor && !song.album.isEmpty {
+          lines.append("   \(color(truncate(song.album, width - 6), theme.dim))")
+        }
+      }
+      if model.results.count > maxRows {
+        lines.append(color("Showing \(start + 1)–\(end) of \(model.results.count) results", theme.dim))
+      }
+    }
+    if !model.status.isEmpty { lines.append(statusLine(model.status, width: width, theme: theme)) }
+    lines.append("")
+    if model.catalogTyping {
+      lines.append(hints(theme, ("TYPE", "query"), ("ENTER", "search"), ("ESC", "cancel")))
+    } else {
+      lines.append(
+        hints(theme, ("j / k", "navigate"), ("ENTER", "play"), ("/", "edit"), ("ESC", "player"))
+      )
+      lines.append(hints(theme, ("?", "help"), ("q", "quit TUI"), ("Q", "quit Music")))
+    }
+    return lines
+  }
+
+  private static func helpView(_ theme: Theme) -> [String] {
+    [
+      color("KEYBOARD CONTROLS", theme.accent),
+      color("Press ? or Esc to close this panel.", theme.dim),
+      "",
+      color("PLAYER", theme.highlight),
+      "Space  Play or pause",
+      "n / p, ← / →  Next / previous track",
+      "f / b  Seek forward / back 10 seconds",
+      "+ / -  Increase / decrease volume",
+      "s  Toggle shuffle",
+      "t  Cycle colour theme",
+      "Tab / l  Open playlists",
+      "/  Search the Apple Music catalog",
+      "",
+      color("LIBRARY & DISCOVER", theme.highlight),
+      "t or /  Search your library tracks (in Library)",
+      "j / k or arrows  Move selection",
+      "Enter  Play selected track or playlist",
+      "Esc  Back to playlists, cancel, or clear filter",
+      "",
+      color("GLOBAL", theme.highlight),
+      "? or Esc  Close this help panel",
+      "q  Exit apple-music-tui and leave Music playing",
+      "Q  Quit Music and exit",
+    ]
+  }
+
+  private static func hints(_ theme: Theme, _ items: (String, String)...) -> String {
+    items.map { "\(color($0.0, theme.accent)) \(color($0.1, theme.dim))" }
+      .joined(separator: "   ")
+  }
+
+  private static func statusLine(_ value: String, width: Int, theme: Theme) -> String {
+    let lower = value.lowercased()
+    let isError =
+      value.hasPrefix("Error:") || lower.contains("failed") || value.contains("Could not")
+    return color(truncate(value, width), isError ? theme.error : theme.highlight)
+  }
+
+  private static func truncate(_ value: String, _ width: Int) -> String {
+    guard width > 0 else { return "" }
+    if visibleWidth(value) <= width { return value }
+    if width == 1 { return "…" }
+    var output = ""
+    for character in value {
+      if visibleWidth(output + String(character) + "…") > width { break }
+      output.append(character)
+    }
+    return output + "…"
+  }
+
+  private static func color(_ value: String, _ code: String) -> String {
+    "\u{001B}[\(code)m\(value)\u{001B}[0m"
+  }
+
+  private static func visibleWidth(_ value: String) -> Int {
+    value.replacingOccurrences(of: #"\x1B\[[0-9;]*m"#, with: "", options: .regularExpression).count
+  }
+}
