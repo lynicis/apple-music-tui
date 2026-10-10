@@ -141,6 +141,7 @@ MUSICTUI_COUNTRY=US swift run apple-music-tui
 - **MediaRemote fills the gaps.** On macOS 15.4 and later MediaRemote is restricted to entitled processes, so AppleScript can stop returning track properties or playback timing for streamed tracks. For those cases apple-music-tui reads the system-wide now-playing session through the [`mediaremote-adapter`](https://github.com/ejbills/mediaremote-adapter) Swift package, which builds the adapter library and drives it through the system Perl interpreter (`/usr/bin/perl`). The `nowplaying-cli` executable is never invoked, and no Homebrew install is needed.
 - **The fallback is verified before use.** Because the adapter reports the system-wide session, the result is discarded unless it belongs to Music, and the track title must match the AppleScript title when one is available. Its timestamp-adjusted position is what lets reopening apple-music-tui mid-song resume at the real position instead of `0:00`.
 - **Timing is interpolated.** The display advances elapsed time between polls and deliberately does not reset the interpolation anchor when a stale sample repeats, so the progress bar keeps moving.
+- **Idle polling backs off.** Playback is polled once a second while something is playing or while you are typing, and every three seconds once a player is left paused and untouched, so an open window stops spawning `osascript` for no reason.
 - **Threading.** Input and rendering run on the main loop; every AppleScript, Perl, and network call runs on a worker queue and reports back through a mailbox. The main run loop is serviced between polls so the adapter's main-queue callbacks can run.
 - **Output.** Frames are written with POSIX `write` in a retry loop that handles `EINTR` and waits on `poll` for `EAGAIN`/`EWOULDBLOCK`, instead of using Foundation `FileHandle.write`. The frame is double-buffered: only rows that changed are retyped, each positioned and erased to end of line, so a shorter row can never leave a stale tail behind.
 
@@ -150,7 +151,7 @@ MediaRemote relies on private macOS APIs and may change after OS updates. If nei
 
 | Symptom | Cause and fix |
 | --- | --- |
-| `MusicTUI needs an interactive terminal.` | stdin or stdout is not a TTY. Run the binary directly in a terminal rather than through a pipe or a non-interactive shell. |
+| `apple-music-tui needs an interactive terminal.` | stdin or stdout is not a TTY. Run the binary directly in a terminal rather than through a pipe or a non-interactive shell. |
 | Nothing plays after selecting a catalog result | The track may be unavailable for your account or region. The status line says the playback could not be confirmed; press `Tab` then `t` to search your library for a copy. |
 | Timing shows `--:--` | Neither AppleScript nor MediaRemote reported timing. Check that the terminal app has Automation permission under System Settings → Privacy & Security → Automation. |
 | Catalog search returns no results | The storefront may not carry the track. Set `MUSICTUI_COUNTRY` to your storefront, e.g. `MUSICTUI_COUNTRY=US`. |
@@ -180,7 +181,7 @@ Sources/MusicTUICore/        model, terminal runtime, view, playback, catalog
   Theme.swift                colour themes and persistence
 Tests/MusicTUICoreTests/     XCTest suite
 demo/demo.cast               asciinema recording used in this README
-demo/demo.gif, demo/demo.mp4 rendered from that recording
+demo/demo.gif                rendered from that recording
 ```
 
 ## Acknowledgements
