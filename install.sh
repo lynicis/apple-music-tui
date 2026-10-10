@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
-# Installs apple-music-tui on macOS (Apple silicon).
+# Installs apple-music-tui on macOS (Apple silicon and Intel).
 #   curl -fsSL https://raw.githubusercontent.com/lynicis/apple-music-tui/master/install.sh | bash
 set -euo pipefail
 
 REPO="lynicis/apple-music-tui"
-ASSET="apple-music-tui-macos-arm64.tar.gz"
+ASSET="apple-music-tui-macos-universal.tar.gz"
 SUMS="checksums.txt"
 BASE="https://github.com/${REPO}/releases/latest/download"
 
 fail() { echo "apple-music-tui: $1" >&2; exit 1; }
 
 [ "$(uname -s)" = "Darwin" ] || fail "this app only runs on macOS."
-[ "$(uname -m)" = "arm64" ] || fail "this build is Apple silicon only (this Mac reports $(uname -m))."
+case "$(uname -m)" in
+  arm64 | x86_64) ;;
+  *) fail "this build supports Apple silicon and Intel Macs (this Mac reports $(uname -m))." ;;
+esac
 
 INSTALL_DIR="${APPLE_MUSIC_TUI_INSTALL_DIR:-}"
 if [ -z "$INSTALL_DIR" ]; then
