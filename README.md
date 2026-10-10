@@ -55,7 +55,7 @@ The MediaRemote adapter used for streamed tracks is supplied by the `mediaremote
 Install the latest release (Apple silicon):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/lynicis/apple-music-tui/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/lynicis/apple-music-tui/master/install.sh | bash
 ```
 
 Or build from source with Swift Package Manager:

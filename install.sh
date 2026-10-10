@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Installs apple-music-tui on macOS (Apple silicon).
-#   curl -fsSL https://raw.githubusercontent.com/lynicis/apple-music-tui/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/lynicis/apple-music-tui/master/install.sh | bash
 set -euo pipefail
 
 REPO="lynicis/apple-music-tui"
