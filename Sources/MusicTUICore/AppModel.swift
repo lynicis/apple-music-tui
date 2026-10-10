@@ -93,6 +93,9 @@ public struct AppModel {
       tracks = []
       status = "Library search failed: \(error ?? "Unknown error")"
     }
+    // Playing a new track is only started once the user presses ENTER, so the
+    // status must not be overwritten by a stale operation result.
+    status = ""
   }
 
   public mutating func applyPlaylistResult(_ value: [String]?, error: String?) {

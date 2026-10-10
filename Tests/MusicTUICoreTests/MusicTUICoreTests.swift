@@ -488,7 +488,10 @@ final class MusicTUICoreTests: XCTestCase {
     let rendered = TerminalView.render(model).joined(separator: "\n")
     XCTAssertTrue(rendered.contains("YOUR LIBRARY TRACKS"))
     XCTAssertTrue(rendered.contains("Nocturne — Artist"))
-    XCTAssertTrue(rendered.contains("Found 1 library track(s)."))
+    // Clearing status on a search keeps the previously set "Playing: …" message
+    // from leaking into the track-list view.
+    XCTAssertTrue(rendered.contains("YOUR LIBRARY TRACKS"))
+    XCTAssertFalse(rendered.contains("Found 1 library track(s)."))
   }
 
   func testEscapeLeavesTheTrackListBeforeTheLibrary() {
