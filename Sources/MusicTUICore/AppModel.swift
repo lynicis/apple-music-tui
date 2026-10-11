@@ -4,7 +4,6 @@ public struct AppModel {
   public var nowPlaying = NowPlaying()
   public var musicError: String?
   public var status = ""
-  public var statusShownAt = Date.distantPast
   public var mode: ViewMode = .player
   public var width = 100
   public var height = 30
@@ -87,7 +86,6 @@ public struct AppModel {
     theme = Theme.all[index]
     themeStore.save(theme)
     status = "Theme: \(theme.name)"
-    statusShownAt = Date()
   }
 
   public mutating func applyLibrarySearchResult(query: String, songs: [Song]?, error: String?) {
@@ -159,7 +157,6 @@ public struct AppModel {
 
   public mutating func applyCommandResult(message: String, error: String?) {
     status = error.map { "Error: \($0)" } ?? message
-    statusShownAt = Date()
   }
 
   public mutating func takePendingCommands() -> [PendingAppCommand] {
@@ -170,26 +167,12 @@ public struct AppModel {
 
   @discardableResult
   public mutating func handle(_ input: InputKey) -> KeyAction {
-    let key: String
-    switch input {
-    case .character(let value): key = value
-    case .space: key = " "
-    case .enter: key = "ENTER"
-    case .escape: key = "ESC"
-    case .backspace: key = "BACKSPACE"
-    case .tab: key = "TAB"
-    case .up: key = "UP"
-    case .down: key = "DOWN"
-    case .left: key = "LEFT"
-    case .right: key = "RIGHT"
-    }
-
     let typing = playlistTyping || trackTyping || catalogTyping
     if helpVisible {
-      if key == "?" || key == "ESC" { helpVisible = false }
+      if input == .character("?") || input == .escape { helpVisible = false }
       return .continueRunning
     }
-    if !typing && key == "?" {
+    if !typing && input == .character("?") {
       helpVisible = true
       return .continueRunning
     }
@@ -197,37 +180,35 @@ public struct AppModel {
     // q and Q mean the same in every mode, so they are handled once here rather
     // than repeated in each mode switch.
     if !typing {
-      if key == "q" { return .quitApplication }
-      if key == "Q" {
+      if input == .character("q") { return .quitApplication }
+      if input == .character("Q") {
         enqueue(.quitMusic, message: "Quitting Music…", quitAfterSuccess: true)
         return .continueRunning
       }
     }
 
     switch mode {
-    case .player: return handlePlayer(key)
-    case .library: return handleLibrary(key)
-    case .catalog: return handleCatalog(key)
-    case .queue: return handleQueue(key)
+    case .player: return handlePlayer(input)
+    case .library: return handleLibrary(input)
+    case .catalog: return handleCatalog(input)
+    case .queue: return handleQueue(input)
     }
   }
 
-  private mutating func handleQueue(_ key: String) -> KeyAction {
-    if key == "l" || key == "ESC" || key == "TAB" {
-      mode = .player
-      return .continueRunning
-    }
+  private mutating func handleQueue(_ input: InputKey) -> KeyAction {
     // q and Q are handled once before the mode switch, like in every other view.
-    switch key {
-    case " ", "ENTER":
+    switch input {
+    case .character("l"), .escape, .tab:
+      mode = .player
+    case .space, .enter:
       // There is no jump-to-row: Music's scripting can only start a track by
       // leaving the playlist context behind, so the view says what to use
       // instead of silently doing nothing.
       status = "Use n / p to step through the queue, or Music itself to jump."
-    case "n", "RIGHT": enqueue(.queuePlayNext, message: "Skipping to the next track…")
-    case "p", "LEFT": enqueue(.queuePlayPrevious, message: "Moving to the previous track…")
-    case "UP", "k": queue.setCursor(queue.cursor - 1)
-    case "DOWN", "j": queue.setCursor(queue.cursor + 1)
+    case .character("n"), .right: enqueue(.queuePlayNext, message: "Skipping to the next track…")
+    case .character("p"), .left: enqueue(.queuePlayPrevious, message: "Moving to the previous track…")
+    case .up, .character("k"): queue.setCursor(queue.cursor - 1)
+    case .down, .character("j"): queue.setCursor(queue.cursor + 1)
     default: break
     }
     return .continueRunning
@@ -287,32 +268,32 @@ public struct AppModel {
     return current
   }
 
-  private mutating func handlePlayer(_ key: String) -> KeyAction {
-    switch key {
-    case "TAB", "l":
+  private mutating func handlePlayer(_ input: InputKey) -> KeyAction {
+    switch input {
+    case .tab, .character("l"):
       mode = .library
       if !playlistsLoaded && !playlistsLoading {
         playlistsLoading = true
         status = "Loading playlists…"
         pendingCommands.append(PendingAppCommand(command: .loadPlaylists, message: status))
       }
-    case "u":
+    case .character("u"):
       mode = .queue
       enqueue(.loadQueue, message: "Loading the queue…")
-    case "/":
+    case .character("/"):
       mode = .catalog
       catalogDraft = catalogQuery
       catalogTyping = true
       status = "Type a song, artist, or album name."
-    case " ": enqueue(.playPause, message: "Toggling playback…")
-    case "n", "RIGHT": enqueue(.next, message: "Skipping to the next track…")
-    case "p", "LEFT": enqueue(.previous, message: "Moving to the previous track…")
-    case "+", "=", "UP": adjustVolume(5)
-    case "-", "_", "DOWN": adjustVolume(-5)
-    case "f": enqueue(.seek(10), message: "Seeking forward 10 seconds…")
-    case "b": enqueue(.seek(-10), message: "Seeking back 10 seconds…")
-    case "s": enqueue(.toggleShuffle, message: "Toggling shuffle…")
-    case "t": cycleTheme()
+    case .space: enqueue(.playPause, message: "Toggling playback…")
+    case .character("n"), .right: enqueue(.next, message: "Skipping to the next track…")
+    case .character("p"), .left: enqueue(.previous, message: "Moving to the previous track…")
+    case .character("+"), .character("="), .up: adjustVolume(5)
+    case .character("-"), .character("_"), .down: adjustVolume(-5)
+    case .character("f"): enqueue(.seek(10), message: "Seeking forward 10 seconds…")
+    case .character("b"): enqueue(.seek(-10), message: "Seeking back 10 seconds…")
+    case .character("s"): enqueue(.toggleShuffle, message: "Toggling shuffle…")
+    case .character("t"): cycleTheme()
     default: break
     }
     return .continueRunning
@@ -330,21 +311,22 @@ public struct AppModel {
   /// Applies one keystroke to a search draft: backspace deletes, space and
   /// printable characters append. Returns nil for keys the caller handles
   /// itself, so the three typing modes share a single edit rule.
-  private static func editedDraft(_ key: String, from draft: String) -> String? {
-    switch key {
-    case "BACKSPACE": return String(draft.dropLast())
-    case " ": return draft + " "
-    default: return key.count == 1 ? draft + key : nil
+  private static func editedDraft(_ input: InputKey, from draft: String) -> String? {
+    switch input {
+    case .backspace: return String(draft.dropLast())
+    case .space: return draft + " "
+    case .character(let value): return value.count == 1 ? draft + value : nil
+    default: return nil
     }
   }
 
-  private mutating func handleLibrary(_ key: String) -> KeyAction {
+  private mutating func handleLibrary(_ input: InputKey) -> KeyAction {
     if trackTyping {
-      switch key {
-      case "ESC":
+      switch input {
+      case .escape:
         trackTyping = false
         trackDraft = ""
-      case "ENTER":
+      case .enter:
         let query = trackDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         trackTyping = false
         guard !query.isEmpty else {
@@ -357,26 +339,26 @@ public struct AppModel {
         status = "Searching your library…"
         pendingCommands.append(
           PendingAppCommand(command: .searchLibrary(query), message: status))
-      default: if let edited = Self.editedDraft(key, from: trackDraft) { trackDraft = edited }
+      default: if let edited = Self.editedDraft(input, from: trackDraft) { trackDraft = edited }
       }
       return .continueRunning
     }
     if playlistTyping {
-      switch key {
-      case "ESC":
+      switch input {
+      case .escape:
         playlistTyping = false
         playlistDraft = ""
-      case "ENTER":
+      case .enter:
         playlistFilter = playlistDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         playlistTyping = false
         playlistCursor = 0
         status = "\(filteredPlaylists.count) playlist(s) match."
-      default: if let edited = Self.editedDraft(key, from: playlistDraft) { playlistDraft = edited }
+      default: if let edited = Self.editedDraft(input, from: playlistDraft) { playlistDraft = edited }
       }
       return .continueRunning
     }
-    switch key {
-    case "ESC":
+    switch input {
+    case .escape:
       if showingTracks {
         showingTracks = false
         status = ""
@@ -388,13 +370,13 @@ public struct AppModel {
       } else {
         mode = .player
       }
-    case "TAB", "l": mode = .player
-    case "t":
+    case .tab, .character("l"): mode = .player
+    case .character("t"):
       showingTracks = true
       trackTyping = true
       trackDraft = ""
       status = "Search your library by track, artist, or album."
-    case "/":
+    case .character("/"):
       if showingTracks {
         trackTyping = true
         trackDraft = trackQuery
@@ -404,19 +386,19 @@ public struct AppModel {
         playlistDraft = ""
         status = "Search playlists by name."
       }
-    case "UP", "k":
+    case .up, .character("k"):
       if showingTracks {
         trackCursor = max(0, trackCursor - 1)
       } else {
         playlistCursor = max(0, playlistCursor - 1)
       }
-    case "DOWN", "j":
+    case .down, .character("j"):
       if showingTracks {
         trackCursor = min(max(0, tracks.count - 1), trackCursor + 1)
       } else {
         playlistCursor = min(max(0, filteredPlaylists.count - 1), playlistCursor + 1)
       }
-    case "ENTER":
+    case .enter:
       if showingTracks {
         guard !tracks.isEmpty else {
           status = "No library tracks match this search."
@@ -440,13 +422,13 @@ public struct AppModel {
     return .continueRunning
   }
 
-  private mutating func handleCatalog(_ key: String) -> KeyAction {
+  private mutating func handleCatalog(_ input: InputKey) -> KeyAction {
     if catalogTyping {
-      switch key {
-      case "ESC":
+      switch input {
+      case .escape:
         catalogTyping = false
         mode = .player
-      case "ENTER":
+      case .enter:
         let query = catalogDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else {
           status = "Enter a search query first."
@@ -458,19 +440,19 @@ public struct AppModel {
         status = "Searching the Apple Music catalog…"
         pendingCommands.append(
           PendingAppCommand(command: .searchCatalog(query), message: status))
-      case "DOWN": if !results.isEmpty { catalogTyping = false }
-      default: if let edited = Self.editedDraft(key, from: catalogDraft) { catalogDraft = edited }
+      case .down: if !results.isEmpty { catalogTyping = false }
+      default: if let edited = Self.editedDraft(input, from: catalogDraft) { catalogDraft = edited }
       }
       return .continueRunning
     }
-    switch key {
-    case "ESC": mode = .player
-    case "/", "TAB":
+    switch input {
+    case .escape: mode = .player
+    case .character("/"), .tab:
       catalogTyping = true
       catalogDraft = catalogQuery
-    case "UP", "k": resultCursor = max(0, resultCursor - 1)
-    case "DOWN", "j": resultCursor = min(max(0, results.count - 1), resultCursor + 1)
-    case "ENTER":
+    case .up, .character("k"): resultCursor = max(0, resultCursor - 1)
+    case .down, .character("j"): resultCursor = min(max(0, results.count - 1), resultCursor + 1)
+    case .enter:
       guard !results.isEmpty else { return .continueRunning }
       let song = results[clamp(resultCursor, min: 0, max: results.count - 1)]
       mode = .player

@@ -76,20 +76,40 @@ enum AppleScript {
 
   static let quitMusic = #"tell application "Music" to quit"#
   static let playerState = #"tell application "Music" to return (player state as string)"#
+
+  /// Music's current output volume, so a catalog seek can mute it and put the
+  /// user's own level back afterwards instead of guessing a default.
+  static let soundVolume = #"tell application "Music" to return (sound volume as text)"#
+
+  /// The current track's title, or an empty string when nothing is loaded.
+  /// Used to confirm a requested song actually started, instead of trusting a
+  /// bare `playing` state that may belong to whatever was already playing.
+  static let currentTrackTitle = #"""
+    if application "Music" is not running then return ""
+    tell application "Music"
+        try
+            return name of current track
+        on error
+            return ""
+        end try
+    end tell
+    """#
   static let hideMusic = #"tell application "System Events" to set visible of process "Music" to false"#
   static let closeMusicWindows = #"tell application "Music" to close every window"#
 
   /// Steps within the playlist Music is playing from. Music takes about a
-  /// second to swap the track, so each of these waits for the current track to
-  /// actually change: the queue is read straight afterwards, and without the
-  /// wait it would still mark the old row as playing.
-  static let queuePlayNext = #"""
+  /// second to swap the track, so this waits for the current track to actually
+  /// change: the queue is read straight afterwards, and without the wait it
+  /// would still mark the old row as playing. `direction` is a constant verb
+  /// ("next" / "previous"), never user input, so it needs no escaping.
+  static func stepTrack(_ direction: String) -> String {
+    #"""
     tell application "Music"
         set previousID to ""
         try
             set previousID to (persistent ID of current track)
         end try
-        next track
+        \#(direction) track
         repeat 15 times
             set currentID to ""
             try
@@ -100,24 +120,7 @@ enum AppleScript {
         end repeat
     end tell
     """#
-
-  static let queuePlayPrevious = #"""
-    tell application "Music"
-        set previousID to ""
-        try
-            set previousID to (persistent ID of current track)
-        end try
-        previous track
-        repeat 15 times
-            set currentID to ""
-            try
-                set currentID to (persistent ID of current track)
-            end try
-            if currentID is not "" and currentID is not previousID then exit repeat
-            delay 0.1
-        end repeat
-    end tell
-    """#
+  }
 
   // There is no script for starting a specific queued row. Any `play <track>`
   // leaves Music without a current playlist at all, so the queue could not be
@@ -212,20 +215,133 @@ enum AppleScript {
     #"tell application "Music" to play (first track of library playlist 1 whose persistent ID is "\#(escape(identifier))")"#
   }
 
-  /// Opens a catalog link and starts it. On recent macOS releases `open
-  /// location` only opens the item's page, so we explicitly start playback.
-  static func openCatalog(_ url: String) -> String {
+  /// Header of the collection Music is showing, but only when it matches
+  /// `album` — otherwise "". Used to wait until a catalog link has actually
+  /// navigated before its controls are driven. Nothing is matched by a
+  /// localized label: the content list is found by role and the header by the
+  /// album's own title. A page whose first node is not the header (e.g. when it
+  /// is still loading) simply does not match yet, which is what waiting wants.
+  static func catalogPageHeader(_ album: String, _ song: String) -> String {
     #"""
-    tell application "Music"
-        open location "\#(escape(url))"
-        delay 0.5
-        try
-            play
-        end try
-        try
-            play current track
-        end try
-    end tell
+    try
+        tell application "System Events"
+            tell process "Music"
+                set wantedAlbum to "\#(escape(album))"
+                set wantedSong to "\#(escape(song))"
+                set sg to missing value
+                try
+                    set sg to first UI element of window 1 whose role is "AXSplitGroup"
+                end try
+                if sg is missing value then return ""
+                repeat with lvl1 in (UI elements of sg)
+                    if (role of lvl1) is "AXScrollArea" then
+                        repeat with lvl2 in (UI elements of lvl1)
+                            if (role of lvl2) is "AXList" then
+                                repeat with lvl3 in (UI elements of lvl2)
+                                    set hdrtxt to (description of lvl3)
+                                    if wantedAlbum is "" or hdrtxt is wantedAlbum or hdrtxt contains wantedAlbum or wantedAlbum contains hdrtxt then
+                                        return hdrtxt
+                                    end if
+                                    if wantedSong is not "" then
+                                        repeat with lvl4 in (UI elements of lvl3)
+                                            if (description of lvl4) contains wantedSong then return hdrtxt
+                                        end repeat
+                                    end if
+                                end repeat
+                            end if
+                        end repeat
+                    end if
+                end repeat
+                return ""
+            end tell
+        end tell
+    on error
+        return ""
+    end try
+    """#
+  }
+
+  /// Presses the Play control of the collection whose header matches `album` on
+  /// the page Music is showing. On recent macOS the page's own Play control —
+  /// not opening the link — is what starts playback, and it works while Music is
+  /// hidden, so no `activate` is needed. Matching the header also stops a stale
+  /// page's Play from being pressed by mistake.
+  ///
+  /// Music gives these controls no AXIdentifier, so nothing is matched by a
+  /// localized label: the content list is found by role, the header by the
+  /// album's own title, and the control by position (the first button in the
+  /// album header is Play). A "Play"/"Play" description-or-title is only a
+  /// preference, so a non-English Music still works. Needs Accessibility
+  /// permission for the calling app. Returns "ok", "no page", "no play control",
+  /// "accessibility", or "error <n>".
+  static func pressCollectionPlay(_ album: String, _ song: String) -> String {
+    #"""
+    try
+        tell application "System Events"
+            tell process "Music"
+                set wantedAlbum to "\#(escape(album))"
+                set wantedSong to "\#(escape(song))"
+                set sg to missing value
+                try
+                    set sg to first UI element of window 1 whose role is "AXSplitGroup"
+                end try
+                if sg is missing value then return "no page"
+                repeat with lvl1 in (UI elements of sg)
+                    if (role of lvl1) is "AXScrollArea" then
+                        repeat with lvl2 in (UI elements of lvl1)
+                            if (role of lvl2) is "AXList" then
+                                set headerL3 to missing value
+                                set firstL3 to missing value
+                                set songSeen to false
+                                repeat with lvl3 in (UI elements of lvl2)
+                                    if firstL3 is missing value then set firstL3 to lvl3
+                                    set hdrtxt to (description of lvl3)
+                                    if headerL3 is missing value and (wantedAlbum is "" or hdrtxt is wantedAlbum or hdrtxt contains wantedAlbum or wantedAlbum contains hdrtxt) then
+                                        set headerL3 to lvl3
+                                    end if
+                                    if wantedSong is not "" then
+                                        repeat with lvl4 in (UI elements of lvl3)
+                                            if (description of lvl4) contains wantedSong then set songSeen to true
+                                        end repeat
+                                    end if
+                                end repeat
+                                -- On pages whose header title is not the album name (some
+                                -- singles), fall back to the first header once the requested
+                                -- song is listed somewhere on the page.
+                                if headerL3 is missing value and songSeen then set headerL3 to firstL3
+                                if headerL3 is not missing value then
+                                    set firstBtn to missing value
+                                    set playBtn to missing value
+                                    repeat with lvl4 in (UI elements of headerL3)
+                                        repeat with lvl5 in (UI elements of lvl4)
+                                            if (role of lvl5) is "AXButton" then
+                                                if firstBtn is missing value then set firstBtn to lvl5
+                                                try
+                                                    if (description of lvl5) is "Play" or (title of lvl5) is "Play" then set playBtn to lvl5
+                                                end try
+                                            end if
+                                        end repeat
+                                    end repeat
+                                    if playBtn is not missing value then
+                                        perform action "AXPress" of playBtn
+                                        return "ok"
+                                    end if
+                                    if firstBtn is not missing value then
+                                        perform action "AXPress" of firstBtn
+                                        return "ok"
+                                    end if
+                                end if
+                            end if
+                        end repeat
+                    end if
+                end repeat
+                return "no play control"
+            end tell
+        end tell
+    on error errMsg number errNum
+        if errNum is -1743 or errNum is -25211 or errNum is -1719 then return "accessibility"
+        return "error " & errNum
+    end try
     """#
   }
 

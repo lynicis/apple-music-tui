@@ -96,12 +96,75 @@ final class MusicTUICoreTests: XCTestCase {
     XCTAssertEqual(availableTime(0, available: true), "0:00")
   }
 
-  func testOpenCatalogAppleScriptStartsPlaybackAfterOpeningTheItem() {
-    let script = AppleScript.openCatalog("music://music.apple.com/us/album/x/1?i=2")
-    XCTAssertTrue(script.contains("open location"), "the catalog link must still be opened")
+  func testPressCollectionPlayIsScopedToTheAlbumAndWorksHidden() {
+    let script = AppleScript.pressCollectionPlay("Footloose", "Holding Out for a Hero")
     XCTAssertTrue(
-      script.contains("play"),
-      "opening a catalog link alone only shows its page on recent macOS, so playback must be started")
+      script.contains("perform action \"AXPress\""),
+      "the page's Play control must be pressed, not merely opened")
+    XCTAssertFalse(
+      script.contains("activate"),
+      "the control works while Music is hidden, so focus must not be stolen")
+    XCTAssertTrue(
+      script.contains("contains wanted") || script.contains("is wanted"),
+      "the press must be scoped to the requested collection, not the first Play on the page")
+    XCTAssertTrue(
+      script.contains("return \"accessibility\""),
+      "a missing Accessibility grant must be reported, not swallowed")
+  }
+
+  func testCatalogPageHeaderMatchesByAlbumWithoutLocalizedLabels() {
+    let script = AppleScript.catalogPageHeader("Footloose", "Holding Out for a Hero")
+    XCTAssertTrue(
+      script.contains("(role of lvl2) is \"AXList\""),
+      "the content list must be found by role, not a localized description")
+    XCTAssertFalse(
+      script.contains("\"collection\"") || script.contains("\"section\""),
+      "a localized container label must not be required")
+    XCTAssertTrue(
+      script.contains("hdrtxt contains wantedAlbum"),
+      "the header must be matched by the album's own title")
+    XCTAssertTrue(
+      script.contains("contains wantedSong"),
+      "pages whose header is not the album name are still detected by the song")
+  }
+
+  func testPressCollectionPlayDoesNotRequireALocalizedPlayLabel() {
+    let script = AppleScript.pressCollectionPlay("Footloose", "Holding Out for a Hero")
+    XCTAssertFalse(
+      script.contains("(description of lvl2) is \"collection\""),
+      "the content list must be found by role")
+    XCTAssertTrue(
+      script.contains("set firstBtn to lvl5"),
+      "the control is chosen by position, so a non-English label still works")
+    XCTAssertTrue(
+      script.contains("perform action \"AXPress\" of firstBtn"),
+      "the positional control must actually be pressed")
+    XCTAssertTrue(
+      script.contains("if headerL3 is missing value and songSeen then set headerL3 to firstL3"),
+      "a page whose header is not the album name must still work when the song is listed")
+  }
+
+  func testPlaybackIsNotConfirmedWhenADifferentTrackIsPlaying() {
+    let song = Song(
+      name: "Holding Out for a Hero", artist: "Bonnie Tyler", album: "", url: "")
+
+    // The catalog handoff silently leaves the previous track playing; that
+    // `playing` state must not be reported as the requested song succeeding.
+    XCTAssertFalse(
+      AppleMusicController.reportsRequestedSong(
+        song, state: "playing", title: "Lay All Your Love On Me"))
+    XCTAssertFalse(
+      AppleMusicController.reportsRequestedSong(song, state: "paused", title: song.name))
+    XCTAssertFalse(AppleMusicController.reportsRequestedSong(song, state: "playing", title: ""))
+    XCTAssertTrue(
+      AppleMusicController.reportsRequestedSong(song, state: "playing", title: song.name))
+  }
+
+  func testReportedSongIgnoresTitlePunctuationAndCase() {
+    let song = Song(name: "Holding Out for a Hero", artist: "Bonnie Tyler", album: "", url: "")
+    XCTAssertTrue(
+      AppleMusicController.reportsRequestedSong(
+        song, state: "playing", title: "holding out for a hero"))
   }
 
   func testMusicRunningAppleScriptUsesMultilineConditional() {
@@ -669,7 +732,7 @@ final class MusicTUICoreTests: XCTestCase {
     XCTAssertEqual(model.queue.cursor, 2)
     _ = model.handle(.up)
     XCTAssertEqual(model.queue.cursor, 1)
-    XCTAssertEqual(model.queue.selected?.name, "Track 1")
+    XCTAssertEqual(model.queue.entries[model.queue.cursor].name, "Track 1")
   }
 
   func testQueueRefreshKeepsTheCursorAndFailureKeepsTheRows() {

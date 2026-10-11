@@ -22,6 +22,11 @@ public final class TerminalRuntime {
 
     let mailbox = RuntimeEventMailbox()
     let workers = TerminalWorkers(mailbox: mailbox)
+    // Catalog playback can take seconds (open the page, then seek through the
+    // album); let the controller post what it is doing while it runs.
+    if let controller = music as? AppleMusicController {
+      controller.onProgress = { [weak mailbox] message in mailbox?.post(.status(message)) }
+    }
     var renderer = FrameRenderer()
     var screenSize = (columns: 0, rows: 0)
     var running = true
@@ -118,6 +123,7 @@ extension AppModel {
       applyLibrarySearchResult(query: query, songs: nil, error: message)
     case .queueSuccess(let queue): applyQueueResult(queue, error: nil)
     case .queueFailure(let message): applyQueueResult(nil, error: message)
+    case .status(let message): status = message
     case .commandFinished(let message, let error, let quitAfterSuccess):
       applyCommandResult(message: message, error: error)
       return error == nil && quitAfterSuccess
@@ -137,6 +143,7 @@ private enum RuntimeEvent {
   case catalogFailure(query: String, message: String)
   case librarySuccess(query: String, songs: [Song])
   case libraryFailure(query: String, message: String)
+  case status(String)
   case commandFinished(message: String, error: String?, quitAfterSuccess: Bool)
 }
 

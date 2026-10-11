@@ -1,0 +1,14 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "name": "Debug apple-music-tui",
+            "target": "apple-music-tui",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug apple-music-tui"
+        }
+    ]
+}

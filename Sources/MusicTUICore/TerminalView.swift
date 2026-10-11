@@ -276,53 +276,57 @@ public enum TerminalView {
     return lines
   }
 
-  /// Renders the paged queue: a window centred on the cursor, the track Music
-  /// is playing marked with a triangle, the cursor row highlighted, and a
-  /// "Showing a–b of n" footer.
-  private static func queueRows(
-    _ entries: [QueueEntry], cursor: Int, width: Int, height: Int, theme: Theme
+  /// Renders one paged list, shared by the queue and every song list: a window
+  /// centred on the cursor, the selected row highlighted (with its album
+  /// sub-line when it has one), and a "Showing a–b of n <noun>" footer. `row`
+  /// builds the plain text for a row, so each list keeps its own prefixes.
+  private static func pagedRows(
+    count: Int, cursor: Int, height: Int, noun: String, theme: Theme,
+    row: (Int, Bool) -> (text: String, subline: String)
   ) -> [String] {
-    let window = pageWindow(count: entries.count, cursor: cursor, height: height)
+    let window = pageWindow(count: count, cursor: cursor, height: height)
     var lines: [String] = []
     for index in window.start..<window.end {
-      let entry = entries[index]
-      let line =
-        (entry.isCurrent ? "▶ " : "  ") + (index == cursor ? "› " : "  ")
-        + truncate(entry.display, width - 6)
-      lines.append(index == cursor ? color(line, theme.highlight) : line)
-      if index == cursor && !entry.album.isEmpty {
-        lines.append("     \(color(truncate(entry.album, width - 6), theme.dim))")
-      }
+      let isCursor = index == cursor
+      let item = row(index, isCursor)
+      lines.append(isCursor ? color(item.text, theme.highlight) : item.text)
+      if isCursor && !item.subline.isEmpty { lines.append(item.subline) }
     }
-    if entries.count > window.rows {
-      lines.append(
-        color(
-          "Showing \(window.start + 1)–\(window.end) of \(entries.count) queued tracks", theme.dim))
+    if count > window.rows {
+      lines.append(color("Showing \(window.start + 1)–\(window.end) of \(count) \(noun)", theme.dim))
     }
     return lines
   }
 
-  /// Renders the paged song list shared by the library-track and catalog views:
-  /// a window centred on the cursor, the selected row highlighted with an album
-  /// sub-line, and a "Showing a–b of n" footer.
+  /// The queue list: the track Music is playing is marked with a triangle.
+  private static func queueRows(
+    _ entries: [QueueEntry], cursor: Int, width: Int, height: Int, theme: Theme
+  ) -> [String] {
+    pagedRows(
+      count: entries.count, cursor: cursor, height: height, noun: "queued tracks", theme: theme
+    ) { index, isCursor in
+      let entry = entries[index]
+      return (
+        (entry.isCurrent ? "▶ " : "  ") + (isCursor ? "› " : "  ")
+          + truncate(entry.display, width - 6),
+        entry.album.isEmpty ? "" : "     \(color(truncate(entry.album, width - 6), theme.dim))"
+      )
+    }
+  }
+
+  /// The library-track and catalog song list.
   private static func songRows(
     _ songs: [Song], cursor: Int, width: Int, height: Int, noun: String, theme: Theme
   ) -> [String] {
-    let window = pageWindow(count: songs.count, cursor: cursor, height: height)
-    var lines: [String] = []
-    for index in window.start..<window.end {
+    pagedRows(count: songs.count, cursor: cursor, height: height, noun: noun, theme: theme) {
+      index, isCursor in
       let song = songs[index]
       let label = song.artist.isEmpty ? song.name : "\(song.name) — \(song.artist)"
-      let line = (index == cursor ? "› " : "  ") + truncate(label, width - 4)
-      lines.append(index == cursor ? color(line, theme.highlight) : line)
-      if index == cursor && !song.album.isEmpty {
-        lines.append("   \(color(truncate(song.album, width - 6), theme.dim))")
-      }
+      return (
+        (isCursor ? "› " : "  ") + truncate(label, width - 4),
+        song.album.isEmpty ? "" : "   \(color(truncate(song.album, width - 6), theme.dim))"
+      )
     }
-    if songs.count > window.rows {
-      lines.append(color("Showing \(window.start + 1)–\(window.end) of \(songs.count) \(noun)", theme.dim))
-    }
-    return lines
   }
 
   /// The visible slice of `count` items: a window of rows centred on `cursor`

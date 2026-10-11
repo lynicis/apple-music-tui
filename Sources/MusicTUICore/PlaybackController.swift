@@ -4,6 +4,10 @@ import MediaRemoteAdapter
 public final class AppleMusicController: MusicControlling {
   public init() {}
 
+  /// Reports transient status while a slow catalog operation runs, so the view
+  /// can say what is happening (opening/seeking) instead of showing nothing.
+  public var onProgress: ((String) -> Void)?
+
   public func initialize() throws -> NowPlaying {
     let running = try runAppleScript(AppleScript.musicRunning)
     if running != "true" {
@@ -154,8 +158,8 @@ public final class AppleMusicController: MusicControlling {
   public func queue(command: QueueCommand) throws -> Queue {
     switch command {
     case .load: break
-    case .playNext: try perform(AppleScript.queuePlayNext)
-    case .playPrevious: try perform(AppleScript.queuePlayPrevious)
+    case .playNext: try perform(AppleScript.stepTrack("next"))
+    case .playPrevious: try perform(AppleScript.stepTrack("previous"))
     }
     return Self.parseQueueResponse(try runAppleScript(AppleScript.queue))
   }
@@ -199,7 +203,78 @@ public final class AppleMusicController: MusicControlling {
       return
     }
     try openCatalogURL(song.url)
+    try startCatalogPlaybackFromPage(song)
     try confirmPlaybackStarted(song)
+  }
+
+  /// Opening a catalog link only shows the item's page; on recent macOS the
+  /// page's own Play control is what starts playback, so press it and advance
+  /// to the requested track. Navigation needs Music on screen for a moment, so
+  /// hide it as soon as the page has loaded — hiding also hands focus back to
+  /// whatever was frontmost. The page control still works while hidden, so no
+  /// `activate` is used. When Accessibility is not granted, say so instead of
+  /// waiting out the confirmation window — no amount of waiting helps.
+  private func startCatalogPlaybackFromPage(_ song: Song) throws {
+    waitForCatalogPage(song)
+    try? hideMusic()
+    // Mute before starting: the page plays the collection from wherever Music
+    // last left it and stepping plays a fraction of each track, so nothing
+    // should be heard until the requested song is current. The user's own level
+    // is restored whether the press succeeds, fails, or the walk finds nothing.
+    onProgress?("Opening “\(song.name)” — volume muted while it seeks…")
+    let savedVolume = currentVolume()
+    if let savedVolume { try? setVolume(0) }
+    defer {
+      if let savedVolume { try? setVolume(savedVolume) }
+    }
+    let outcome =
+      (try? runAppleScript(AppleScript.pressCollectionPlay(song.album, song.name)))?
+      .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    if outcome == "accessibility" {
+      throw MusicTUIError.commandFailed(
+        "Couldn’t start “\(song.name)”: turn on Accessibility for your terminal in System Settings → Privacy & Security → Accessibility, then try again."
+      )
+    }
+    guard outcome == "ok" else { return }
+    try advanceToSong(song)
+  }
+
+  private func currentVolume() -> Int? {
+    guard let output = try? runAppleScript(AppleScript.soundVolume) else { return nil }
+    return Int(output.trimmingCharacters(in: .whitespacesAndNewlines))
+  }
+
+  /// Waits until Music's window shows the requested collection. `open` returns
+  /// before the page has loaded, and hide/press before then would race it. The
+  /// script reports only a header that matches `album`, so a page still loading
+  /// (or a stale one) does not count as ready.
+  private func waitForCatalogPage(_ song: Song, timeout: TimeInterval = 6) {
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+      let header =
+        (try? runAppleScript(AppleScript.catalogPageHeader(song.album, song.name)))?
+        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+      if !header.isEmpty { return }
+      Thread.sleep(forTimeInterval: 0.25)
+    }
+  }
+
+  /// The page's Play starts the collection from its first track, so step forward
+  /// until the requested song is current. Bounded so a missing match cannot walk
+  /// the whole queue. ponytail: audible track skips if the song is late in the
+  /// collection; per-row playback has no accessibility action to click instead.
+  private func advanceToSong(_ song: Song, maxSteps: Int = 25) throws {
+    // Wait for the press to take effect first, or the initial skip races a
+    // stream that has not started yet and lands on the wrong track.
+    let start = Date()
+    while Date().timeIntervalSince(start) < 6, currentPlayerState() != "playing" {
+      Thread.sleep(forTimeInterval: 0.3)
+    }
+    for _ in 0..<maxSteps {
+      if sameTrackTitle(currentTrackTitle(), song.name) { return }
+      mediaRemote.nextTrack()
+      Thread.sleep(forTimeInterval: 0.8)
+    }
   }
 
   private func libraryMatch(for song: Song) throws -> Song? {
@@ -207,9 +282,16 @@ public final class AppleMusicController: MusicControlling {
   }
 
   private func confirmPlaybackStarted(_ song: Song) throws {
-    let deadline = Date().addingTimeInterval(5)
+    let deadline = Date().addingTimeInterval(8)
     while Date() < deadline {
-      if currentPlayerState() == "playing" {
+      // Wait for the *requested* song, not merely a `playing` state: the catalog
+      // handoff can silently leave whatever was already playing (a library
+      // track, a previous stream) untouched, and treating that as success would
+      // claim a song that never started. This is why catalog playback looked
+      // intermittent — it "worked" whenever something else happened to play.
+      if Self.reportsRequestedSong(
+        song, state: currentPlayerState(), title: currentTrackTitle())
+      {
         try? hideMusic()
         return
       }
@@ -221,24 +303,39 @@ public final class AppleMusicController: MusicControlling {
     // duration yet, and confirming playback only needs the playing state.
     // The adapter reports the system-wide session, so a non-Music session
     // (Safari, etc.) may be `playing` while Music is stopped. Don't treat that
-    // as a successful catalog playback: wait for the Music-side `playing`
-    // state, or MediaRemote only when the session is clearly Music.
+    // as a successful catalog playback: MediaRemote must confirm the requested
+    // track, so a stray session can never pass as this song.
     if let remote = try? readMediaRemote(expectedTitle: song.name, requireTiming: false),
       remote.playing
     {
       try? hideMusic()
       return
     }
-    // Worded as "could not confirm" because macOS can report a stale player
-    // state for streamed tracks, so this is not proof that nothing is playing.
+    // Worded as "never reported as playing" because macOS can report a stale
+    // player state for streamed tracks, so this is not proof that nothing is
+    // playing. The action leads the message: the status line truncates to the
+    // terminal width, and the guidance must survive that cut.
     throw MusicTUIError.commandFailed(
-      "Music did not report playback starting for “\(song.name)”. If nothing plays, the track is unavailable for this Apple Music account or region — press Tab then `t` to search your library for a copy."
+      "Press Tab then `t` for a library copy — Music never reported “\(song.name)” as playing (it may need an Apple Music subscription, or is not in this storefront)."
     )
   }
 
   private func currentPlayerState() -> String {
     let output = try? runAppleScript(AppleScript.playerState)
     return output?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+  }
+
+  private func currentTrackTitle() -> String {
+    let output = try? runAppleScript(AppleScript.currentTrackTitle)
+    return output?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+  }
+
+  /// True only when Music reports the requested song, playing. A bare `playing`
+  /// state is not proof: whatever was already playing keeps its state when the
+  /// catalog handoff does nothing, so `playing` alone would confirm a song that
+  /// never started. An empty title means Music has not reported a track yet.
+  static func reportsRequestedSong(_ song: Song, state: String, title: String) -> Bool {
+    state == "playing" && !title.isEmpty && sameTrackTitle(title, song.name)
   }
 
   private func openCatalogURL(_ rawURL: String) throws {
@@ -251,7 +348,10 @@ public final class AppleMusicController: MusicControlling {
     components.scheme = "music"
     components.queryItems = components.queryItems?.filter { $0.name != "uo" }
     guard let musicURL = components.string else { throw MusicTUIError.invalidCatalogURL }
-    try perform(AppleScript.openCatalog(musicURL))
+    // AppleScript `open location` no longer navigates Music's window on recent
+    // macOS; LaunchServices does, and the page's own Play control is what starts
+    // playback, so hand the link to `open`.
+    _ = try runProcess("/usr/bin/open", arguments: [musicURL])
   }
 
   public func quitMusic() throws {

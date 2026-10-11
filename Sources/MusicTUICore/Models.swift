@@ -43,8 +43,6 @@ public struct Queue: Equatable {
 
   public var isEmpty: Bool { entries.isEmpty }
 
-  public var selected: QueueEntry? { isEmpty ? nil : entries[min(cursor, count - 1)] }
-
   public mutating func setCursor(_ index: Int) {
     cursor = clamp(index, min: 0, max: count - 1)
   }
@@ -108,7 +106,7 @@ public struct Song: Equatable {
   }
 }
 
-public enum MusicTUIError: Error, LocalizedError, Equatable {
+public enum MusicTUIError: Error, LocalizedError {
   case commandNotFound(String)
   case commandFailed(String)
   case invalidCatalogURL
