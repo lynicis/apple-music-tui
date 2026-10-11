@@ -1,5 +1,55 @@
 import Foundation
 
+/// A single row of Music's queue, which is the playlist Music is playing from.
+/// Rows are read-only: Music's scripting cannot start a track inside a playlist
+/// without dropping the playlist context, so `isCurrent` only marks where
+/// playback has reached.
+public struct QueueEntry: Equatable {
+  public var name: String
+  public var artist: String
+  public var album: String
+  /// True for the track Music is playing right now.
+  public var isCurrent: Bool
+
+  public init(name: String = "", artist: String = "", album: String = "", isCurrent: Bool = false) {
+    self.name = name
+    self.artist = artist
+    self.album = album
+    self.isCurrent = isCurrent
+  }
+
+  public var display: String {
+    artist.isEmpty ? name : "\(name) — \(artist)"
+  }
+}
+
+/// The queue is a plain list so it can be paged and rendered with the rest of
+/// the model: the worker rebuilds it from Music after every change, so the rows
+/// on screen always describe what Music will play next instead of a mirror of a
+/// half-applied edit.
+public struct Queue: Equatable {
+  /// Name of the playlist Music is playing from, empty when nothing is playing.
+  public var playlist: String = ""
+  public private(set) var entries: [QueueEntry] = []
+  public private(set) var cursor = 0
+
+  public init(playlist: String = "", entries: [QueueEntry] = []) {
+    self.playlist = playlist
+    self.entries = entries
+    self.cursor = clamp(cursor, min: 0, max: entries.count - 1)
+  }
+
+  public var count: Int { entries.count }
+
+  public var isEmpty: Bool { entries.isEmpty }
+
+  public var selected: QueueEntry? { isEmpty ? nil : entries[min(cursor, count - 1)] }
+
+  public mutating func setCursor(_ index: Int) {
+    cursor = clamp(index, min: 0, max: count - 1)
+  }
+}
+
 public struct NowPlaying: Equatable {
   public var state: String
   public var volume: Int
@@ -91,6 +141,10 @@ public protocol MusicControlling: AnyObject {
   func play(_ song: Song) throws
   /// Searches the user's library by track, artist, or album name.
   func searchLibrary(_ query: String) throws -> [Song]
+  /// Applies one queue intent and returns Music's queue as it stands after the
+  /// change, so the model never renders a half-applied edit.
+  func queue(command: QueueCommand) throws -> Queue
+
   func quitMusic() throws
 }
 
@@ -102,6 +156,7 @@ public enum ViewMode: Equatable {
   case player
   case library
   case catalog
+  case queue
 }
 
 public enum InputKey: Equatable {
@@ -152,6 +207,43 @@ public enum AppCommand: Equatable {
   case loadPlaylists
   case searchCatalog(String)
   case searchLibrary(String)
+  case loadQueue
+  case queuePlayNext
+  case queuePlayPrevious
+
+  /// The queue intent this app command carries, so the worker thread can ask
+  /// the Music controller to mutate the queue without the model knowing Music.
+  public var queueCommand: QueueCommand {
+    switch self {
+    case .loadQueue: return .load
+    case .queuePlayNext: return .playNext
+    case .queuePlayPrevious: return .playPrevious
+    // Only the queue commands above ever reach this property; the empty queue
+    // read is the harmless answer for anything else.
+    default: return .load
+    }
+  }
+}
+
+/// Work requested by the queue UI, dispatched through the same worker
+/// machinery as everything else so slow AppleScript calls can never freeze the
+/// input loop. Commands that target a row carry that row's persistent ID, so
+/// they act on the selection instead of on whatever track happens to be
+/// playing.
+public enum QueueCommand: Equatable {
+  /// Skips to the next track in the playlist Music is playing from.
+  case playNext
+  /// Returns to the previous track in the playlist Music is playing from.
+  case playPrevious
+  /// Reads Music's queue: when the queue view opens, and after a track change,
+  /// so the rows always describe what Music will play.
+  case load
+  // ponytail: there is deliberately no jump-to-row and no remove-from-queue
+  // command. Music has no scripting access to Up Next, so the only list we can
+  // reach is the playlist being played: `play <track>` there leaves Music with
+  // no current playlist at all, and `delete <track>` also deletes Apple Music
+  // tracks from the user's library. Both stay in Music's own UI, where
+  // "Play Next", "Remove from Playlist" and "Delete from Library" are separate.
 }
 
 public struct PendingAppCommand: Equatable {

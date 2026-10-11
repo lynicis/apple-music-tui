@@ -14,6 +14,7 @@ public enum TerminalView {
     case .player: modeTitle = "PLAYER"
     case .library: modeTitle = "LIBRARY"
     case .catalog: modeTitle = "DISCOVER"
+    case .queue: modeTitle = "QUEUE"
     }
     // U+F8FF is Apple's logo glyph; it only renders on Apple system fonts.
     lines.append("\(color("\u{F8FF}  APPLE MUSIC", theme.primary))    \(color("[ \(modeTitle) ]", theme.accent))")
@@ -29,6 +30,8 @@ public enum TerminalView {
         lines.append(contentsOf: libraryView(model, width: contentWidth, height: height))
       case .catalog:
         lines.append(contentsOf: catalogView(model, width: contentWidth, height: height))
+      case .queue:
+        lines.append(contentsOf: queueView(model, width: contentWidth, height: height))
       }
     }
 
@@ -104,7 +107,9 @@ public enum TerminalView {
     if !model.status.isEmpty { lines.append(statusLine(model.status, width: width, theme: theme)) }
     lines.append("")
     lines.append(
-      hints(theme, ("?", "help"), ("t", "theme: \(theme.name)"), ("q", "quit TUI"), ("Q", "quit Music")))
+      hints(
+        theme, ("u", "queue"), ("?", "help"), ("t", "theme: \(theme.name)"), ("q", "quit TUI"),
+        ("Q", "quit Music")))
     return lines
   }
 
@@ -197,6 +202,42 @@ public enum TerminalView {
     return lines
   }
 
+  private static func queueView(_ model: AppModel, width: Int, height: Int) -> [String] {
+    let theme = model.theme
+    var lines = [color("QUEUE", theme.accent)]
+    if model.queue.isEmpty {
+      lines.append(color("Nothing is playing, so Music has no queue.", theme.dim))
+    } else {
+      lines.append(
+        color("\(model.queue.playlist) — \(model.queue.count) track(s) in playing order.", theme.dim)
+      )
+    }
+    lines.append("")
+
+    if model.queue.isEmpty {
+      lines.append(color("Start a track in Music, then press u again.", theme.dim))
+      lines.append(
+        color("The queue is the playlist Music is playing from: the list n / p walk.", theme.dim))
+    } else {
+      lines.append(
+        contentsOf: queueRows(
+          model.queue.entries, cursor: model.queue.cursor, width: width, height: height,
+          theme: theme))
+    }
+    if !model.status.isEmpty {
+      lines.append(statusLine(model.status, width: width, theme: theme))
+    }
+    lines.append("")
+    if model.queue.isEmpty {
+      lines.append(hints(theme, ("ESC / l", "player"), ("?", "help"), ("q", "quit")))
+    } else {
+      lines.append(
+        hints(theme, ("j / k", "navigate"), ("n / p", "next / previous"), ("ESC / l", "player")))
+      lines.append(hints(theme, ("?", "help"), ("q", "quit"), ("Q", "quit Music")))
+    }
+    return lines
+  }
+
   private static func catalogView(_ model: AppModel, width: Int, height: Int) -> [String] {
     let theme = model.theme
     var lines = [
@@ -231,6 +272,32 @@ public enum TerminalView {
         hints(theme, ("j / k", "navigate"), ("ENTER", "play"), ("/", "edit"), ("ESC", "player"))
       )
       lines.append(hints(theme, ("?", "help"), ("q", "quit TUI"), ("Q", "quit Music")))
+    }
+    return lines
+  }
+
+  /// Renders the paged queue: a window centred on the cursor, the track Music
+  /// is playing marked with a triangle, the cursor row highlighted, and a
+  /// "Showing a–b of n" footer.
+  private static func queueRows(
+    _ entries: [QueueEntry], cursor: Int, width: Int, height: Int, theme: Theme
+  ) -> [String] {
+    let window = pageWindow(count: entries.count, cursor: cursor, height: height)
+    var lines: [String] = []
+    for index in window.start..<window.end {
+      let entry = entries[index]
+      let line =
+        (entry.isCurrent ? "▶ " : "  ") + (index == cursor ? "› " : "  ")
+        + truncate(entry.display, width - 6)
+      lines.append(index == cursor ? color(line, theme.highlight) : line)
+      if index == cursor && !entry.album.isEmpty {
+        lines.append("     \(color(truncate(entry.album, width - 6), theme.dim))")
+      }
+    }
+    if entries.count > window.rows {
+      lines.append(
+        color(
+          "Showing \(window.start + 1)–\(window.end) of \(entries.count) queued tracks", theme.dim))
     }
     return lines
   }
@@ -283,12 +350,20 @@ public enum TerminalView {
       "t  Cycle colour theme",
       "Tab / l  Open playlists",
       "/  Search the Apple Music catalog",
+      "u  Open the queue of the playlist Music is playing",
       "",
       color("LIBRARY & DISCOVER", theme.highlight),
       "t or /  Search your library tracks (in Library)",
       "j / k or arrows  Move selection",
       "Enter  Play selected track or playlist",
       "Esc  Back to playlists, cancel, or clear filter",
+      "",
+      color("QUEUE", theme.highlight),
+      "u  Show the queue Music is playing (press ? again to reopen)",
+      "j / k or arrows  Move the cursor",
+      "n / p  Next / previous track, staying in the queue",
+      "▶  The track Music is playing right now",
+      "Esc / l  Back to the player",
       "",
       color("GLOBAL", theme.highlight),
       "? or Esc  Close this help panel",

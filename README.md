@@ -24,6 +24,7 @@ Manage Apple Music right from your terminal while you vibe code. Written in pure
   - [Keyboard shortcuts](#keyboard-shortcuts)
   - [Themes](#themes)
   - [Searching](#searching)
+  - [Queue](#queue)
 - [Configuration](#configuration)
 - [How it works](#how-it-works)
 - [Troubleshooting](#troubleshooting)
@@ -41,7 +42,7 @@ Manage Apple Music right from your terminal while you vibe code. Written in pure
 - **Playlist browser** — browse your user playlists with case-insensitive vim-style `/` filtering.
 - **Library search** — search your own library by track, artist, or album with `t`, and play the selected track by persistent ID.
 - **Catalog search** — search Apple's public iTunes catalog, including songs not added to your local library, and open the selected track in Music.
-- **Library-first playback** — playing a catalog result prefers your library copy when one exists, and the status line says so when Music ignores a catalog link instead of pretending it played.
+- **Queue view** — press `u` in the player to see the playlist Music is playing from, in order, with the track playing right now marked `▶`, and step along it with `n` / `p`.
 - **Four colour themes** — `classic`, `mono`, `ocean`, and `sunset`; press `t` in the player to cycle and the choice is remembered.
 - **Resilient terminal I/O** — uses retryable POSIX writes, including `EAGAIN`/`EWOULDBLOCK` backpressure, rather than Foundation `FileHandle.write`, which can raise an uncaught Objective-C exception on a momentarily full nonblocking terminal.
 - **Non-blocking UI** — input and rendering stay responsive even when AppleScript or a catalog request stalls, because every slow call runs on a worker queue.
@@ -120,12 +121,19 @@ apple-music-tui must run in an interactive terminal; it exits with a message if 
 | `Enter` | Play the selected track or playlist; applies the playlist filter while typing |
 | `Esc` | Close the help panel, cancel a search, clear the filter, or go back |
 | `?` | Open the keyboard/control guide; press `?` or `Esc` to close it |
+| `u` | Open the queue: the playlist Music is playing from |
 | `q` | Exit apple-music-tui and leave Music running |
 | `Q` | Quit Music and exit |
 
 ### Themes
 
 Press `t` in the player to cycle through `classic`, `mono`, `ocean`, and `sunset`. The choice is written to `~/.config/apple-music-tui/theme` and restored on the next launch.
+
+### Queue
+
+Press `u` in the player to open the queue. It lists the playlist Music is playing from — the same list `n` / `p` walk — in playing order, marking the track playing right now with `▶`. `j` / `k` or the arrow keys move the cursor, `n` / `p` move playback to the next and previous track, and `Esc` or `l` returns to the player.
+
+The queue view is read-only, on purpose. Music scripts no access to Up Next, so the only list it can show is the playlist being played, and that list can only be read or stepped through: starting a chosen track with `play <track>` leaves Music with no current playlist at all (the view would then have nothing to read), and `delete <track>` also removes Apple Music tracks from your library. Jumping and removing stay in Music's own controls: **Song ▸ Play Next**, **Song ▸ Add to Queue**, **Song ▸ Remove from Playlist**, **Song ▸ Delete from Library**.
 
 ### Searching
 
@@ -146,7 +154,8 @@ MUSICTUI_COUNTRY=US swift run apple-music-tui
 
 ## How it works
 
-- **AppleScript does the driving.** Playback, playlists, library search, seeking, volume, shuffle, and hiding the Music window all go through `/usr/bin/osascript`. A fast path handles the common case; missing or stale fields are repaired from the fallback source.
+- **Playback control goes through MediaRemote.** Play/pause, next, previous, seek, and shuffle are sent to the system media session through the [`mediaremote-adapter`](https://github.com/ejbills/mediaremote-adapter) Swift package, so they no longer spawn `osascript`.
+- **AppleScript covers what MediaRemote can't.** Volume, playlists, library search, specific-track playback, quitting Music, the queue view (which reads the playlist Music is playing from), and hiding the Music window all go through `/usr/bin/osascript`, and the now-playing read uses AppleScript first with MediaRemote repairing missing or stale fields.
 - **MediaRemote fills the gaps.** On macOS 15.4 and later MediaRemote is restricted to entitled processes, so AppleScript can stop returning track properties or playback timing for streamed tracks. For those cases apple-music-tui reads the system-wide now-playing session through the [`mediaremote-adapter`](https://github.com/ejbills/mediaremote-adapter) Swift package, which builds the adapter library and drives it through the system Perl interpreter (`/usr/bin/perl`). The `nowplaying-cli` executable is never invoked, and no Homebrew install is needed.
 - **The fallback is verified before use.** Because the adapter reports the system-wide session, the result is discarded unless it belongs to Music, and the track title must match the AppleScript title when one is available. Its timestamp-adjusted position is what lets reopening apple-music-tui mid-song resume at the real position instead of `0:00`.
 - **Timing is interpolated.** The display advances elapsed time between polls and deliberately does not reset the interpolation anchor when a stale sample repeats, so the progress bar keeps moving.
@@ -176,7 +185,7 @@ make run           # swift run apple-music-tui
 make clean         # swift package clean
 ```
 
-`make` with no target runs `test` and then `build`. The test suite covers terminal output backpressure, AppleScript response parsing, the MediaRemote snapshot mapping and validation, playlist/track search plumbing, volume and shuffle state handling, frame rendering and double-buffering, and theme persistence (`swift test` runs 40 tests).
+`make` with no target runs `test` and then `build`. The test suite covers terminal output backpressure, AppleScript response parsing, the MediaRemote snapshot mapping and validation, playlist/track search plumbing, volume and shuffle state handling, frame rendering and double-buffering, and theme persistence (`swift test` runs 52 tests).
 
 Layout:
 

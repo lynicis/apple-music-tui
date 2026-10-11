@@ -556,7 +556,7 @@ final class MusicTUICoreTests: XCTestCase {
   }
 
   func testQuitKeysWorkInEveryModeButAreTextWhileTyping() {
-    for mode in [ViewMode.player, .library, .catalog] {
+    for mode in [ViewMode.player, .library, .catalog, .queue] {
       var model = AppModel()
       model.mode = mode
       XCTAssertEqual(model.handle(.character("q")), .quitApplication)
@@ -573,6 +573,167 @@ final class MusicTUICoreTests: XCTestCase {
     XCTAssertEqual(typing.handle(.character("q")), .continueRunning)
     XCTAssertEqual(typing.catalogDraft, "q")
     XCTAssertTrue(typing.takePendingCommands().isEmpty)
+  }
+
+  func testQueueParsesPlaylistAndMarksTheCurrentTrack() {
+    // Fields are separated by ASCII RS (0x1E). The first field names the
+    // playlist Music is playing from; each row is five ASCII FS (0x1F) parts:
+    // name, artist, album, persistent ID, current flag.
+    let rows = [
+      ["Nocturne", "Chopin", "Piano Works", "false"],
+      ["Etude", "Chopin", "Piano Works", "true"],
+    ]
+    let output =
+      "Late Night" + "\u{1E}" + rows.map { $0.joined(separator: "\u{1F}") }
+      .joined(separator: "\u{1E}") + "\u{1E}"
+
+    let queue = AppleMusicController.parseQueueResponse(output)
+
+    XCTAssertEqual(queue.playlist, "Late Night")
+    XCTAssertEqual(queue.count, 2)
+    XCTAssertEqual(queue.entries[0].album, "Piano Works")
+    XCTAssertEqual(queue.entries[1].display, "Etude — Chopin")
+    XCTAssertTrue(queue.entries[1].isCurrent)
+    XCTAssertFalse(queue.entries[0].isCurrent)
+  }
+
+  func testQueueParseTreatsAnEmptyReplyAsNothingPlaying() {
+    let queue = AppleMusicController.parseQueueResponse("")
+    XCTAssertTrue(queue.isEmpty)
+    XCTAssertEqual(queue.playlist, "")
+  }
+
+  func testQueueParseDropsRowsThereIsNothingToActOn() {
+    // A row that lost its separators, a row with an empty title, a row with no
+    // persistent ID, and a row missing the current flag are all dropped: the
+    // view must never offer to play a row it cannot address.
+    let rows = [
+      "Bad Row",
+      "\u{1F}\u{1F}\u{1F}false",
+      "Nocturne\u{1F}Chopin\u{1F}Piano Works",
+      "\u{1F}Chopin\u{1F}Piano Works\u{1F}false",
+      "Good\u{1F}Chopin\u{1F}Piano Works\u{1F}true",
+    ]
+    let output = "Late Night\u{1E}" + rows.joined(separator: "\u{1E}")
+
+    let queue = AppleMusicController.parseQueueResponse(output)
+
+    XCTAssertEqual(queue.entries.map(\.name), ["Good"])
+    XCTAssertEqual(queue.playlist, "Late Night")
+  }
+
+  func testQueueKeysStepThroughTheQueue() {
+    var model = AppModel()
+    model.applyQueueResult(queuedTracks(2), error: nil)
+    model.mode = .queue
+
+    _ = model.handle(.character("n"))
+    _ = model.handle(.character("p"))
+
+    XCTAssertEqual(
+      model.takePendingCommands().map(\.command), [.queuePlayNext, .queuePlayPrevious])
+  }
+
+  func testQueueKeysNeverJumpToARowOrRemoveOne() {
+    // Music cannot start a track inside a playlist without dropping the playlist
+    // context, and deleting one also deletes Apple Music tracks from the
+    // library, so neither key may queue anything. Enter explains that instead.
+    var model = AppModel()
+    model.applyQueueResult(queuedTracks(2), error: nil)
+    model.mode = .queue
+
+    _ = model.handle(.enter)
+    _ = model.handle(.space)
+    _ = model.handle(.character("r"))
+
+    XCTAssertTrue(model.takePendingCommands().isEmpty)
+    XCTAssertEqual(model.status, "Use n / p to step through the queue, or Music itself to jump.")
+  }
+
+  func testQueueCursorMovesWithoutQueueingAnything() {
+    var model = AppModel()
+    model.applyQueueResult(queuedTracks(2), error: nil)
+    model.mode = .queue
+
+    _ = model.handle(.down)
+    XCTAssertEqual(model.queue.cursor, 1)
+    XCTAssertTrue(model.takePendingCommands().isEmpty)
+  }
+
+  func testQueueCursorMovesAndStaysInRange() {
+    var model = AppModel()
+    model.applyQueueResult(queuedTracks(3), error: nil)
+    model.mode = .queue
+
+    for _ in 0..<5 { _ = model.handle(.down) }
+    XCTAssertEqual(model.queue.cursor, 2)
+    _ = model.handle(.up)
+    XCTAssertEqual(model.queue.cursor, 1)
+    XCTAssertEqual(model.queue.selected?.name, "Track 1")
+  }
+
+  func testQueueRefreshKeepsTheCursorAndFailureKeepsTheRows() {
+    var model = AppModel()
+    model.applyQueueResult(queuedTracks(3), error: nil)
+    model.mode = .queue
+    _ = model.handle(.down)
+
+    // A refresh after a track change must not jump to the top.
+    model.applyQueueResult(queuedTracks(3), error: nil)
+    XCTAssertEqual(model.queue.cursor, 1)
+
+    // A failed read must not blank the rows already on screen.
+    model.applyQueueResult(nil, error: "Music is not running.")
+    XCTAssertEqual(model.queue.count, 3)
+    XCTAssertEqual(model.status, "Could not read the queue: Music is not running.")
+  }
+
+  func testQueueEscapeAndTabReturnToThePlayer() {
+    for input in [InputKey.escape, .character("l"), .tab] {
+      var model = AppModel()
+      model.mode = .queue
+      _ = model.handle(input)
+      XCTAssertEqual(model.mode, .player)
+    }
+  }
+
+  func testRenderedQueueMarksThePlayingTrackAndSelectsTheCursorRow() {
+    var model = AppModel()
+    model.mode = .queue
+    model.applyQueueResult(
+      Queue(
+        playlist: "Late Night",
+        entries: [
+          QueueEntry(name: "Nocturne", artist: "Chopin", isCurrent: true),
+          QueueEntry(name: "Etude", artist: "Chopin", album: "Piano Works"),
+        ]),
+      error: nil)
+    // Put the cursor on the row that is not playing, so the playing marker and
+    // the selection marker are on different rows.
+    _ = model.handle(.down)
+
+    let rendered = TerminalView.render(model).joined(separator: "\n")
+
+    XCTAssertTrue(rendered.contains("QUEUE"))
+    XCTAssertTrue(rendered.contains("Late Night — 2 track(s) in playing order."))
+    XCTAssertTrue(rendered.contains("▶   Nocturne — Chopin"), "playing row keeps the ▶ marker")
+    XCTAssertTrue(rendered.contains("  › Etude — Chopin"), "cursor row is highlighted")
+    XCTAssertTrue(rendered.contains("Piano Works"), "the cursor row shows its album")
+  }
+
+  func testPlayerUKeyOpensTheQueueAndLoadsIt() {
+    var model = AppModel()
+
+    _ = model.handle(.character("u"))
+
+    XCTAssertEqual(model.mode, .queue)
+    XCTAssertEqual(model.takePendingCommands().map(\.command), [.loadQueue])
+  }
+
+  private func queuedTracks(_ count: Int) -> Queue {
+    Queue(
+      playlist: "Late Night",
+      entries: (0..<count).map { QueueEntry(name: "Track \($0)", artist: "Artist") })
   }
 }
 
@@ -594,6 +755,7 @@ private final class FakeMusicController: MusicControlling {
   func playPlaylist(_ name: String) throws {}
   func play(_ song: Song) throws {}
   func searchLibrary(_ query: String) throws -> [Song] { [] }
+  func queue(command: QueueCommand) throws -> Queue { Queue() }
   func quitMusic() throws {}
 }
 

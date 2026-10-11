@@ -81,20 +81,37 @@ public final class AppleMusicController: MusicControlling {
       .filter { !$0.isEmpty }
   }
 
-  public func playPause() throws { try perform(AppleScript.playPause) }
-  public func next() throws { try perform(AppleScript.next) }
-  public func previous() throws { try perform(AppleScript.previous) }
+  // Playback control goes through the `mediaremote-adapter` package, which
+  // drives the system media session directly, so these no longer spawn
+  // `osascript` or depend on Music's scripting bridge. Volume, playlists,
+  // library search, specific-track playback, quit, and the queue have no
+  // MediaRemote equivalent and stay on AppleScript below.
+  //
+  // ponytail: MediaRemote commands follow the system-wide media session, so
+  // they act on whichever app owns it. Fine while Music is the active player;
+  // revisit if a second player can hold the session.
+  public func playPause() throws { mediaRemote.togglePlayPause() }
+  public func next() throws { mediaRemote.nextTrack() }
+  public func previous() throws { mediaRemote.previousTrack() }
 
   public func setVolume(_ volume: Int) throws {
     try perform(AppleScript.setVolume(volume))
   }
 
+  /// Seeks relative to the current position. MediaRemote's `setTime` is
+  /// absolute, so the live position is read first; both hit the same session.
   public func seek(_ seconds: Int) throws {
-    try perform(AppleScript.seek(by: seconds))
+    guard let payload = try fetchRemotePayload(),
+      let current = payload.currentElapsedTime
+    else {
+      throw MusicTUIError.commandFailed(
+        "MediaRemote did not report a playback position to seek from.")
+    }
+    mediaRemote.setTime(seconds: Double(max(0, Int(current.rounded()) + seconds)))
   }
 
   public func toggleShuffle() throws {
-    try perform(AppleScript.toggleShuffle)
+    mediaRemote.toggleShuffle()
   }
 
   public func playPlaylist(_ name: String) throws {
@@ -128,6 +145,42 @@ public final class AppleMusicController: MusicControlling {
       throw MusicTUIError.invalidResponse("Missing library track identifier.")
     }
     try perform(AppleScript.playLibraryTrack(identifier))
+  }
+
+  /// Applies one queue intent through AppleScript and returns Music's queue as
+  /// it stands after the change, so the model never renders a half-applied
+  /// edit. The queue is the playlist Music is playing from, which has no
+  /// MediaRemote equivalent, so it stays on AppleScript.
+  public func queue(command: QueueCommand) throws -> Queue {
+    switch command {
+    case .load: break
+    case .playNext: try perform(AppleScript.queuePlayNext)
+    case .playPrevious: try perform(AppleScript.queuePlayPrevious)
+    }
+    return Self.parseQueueResponse(try runAppleScript(AppleScript.queue))
+  }
+
+  /// Parses Music's queue reply. The first RS-separated (0x1E) field is the
+  /// playlist Music is playing from, and each remaining field is one row of
+  /// four FS-separated (0x1F) parts — name, artist, album, current flag. An
+  /// empty reply means nothing is playing. Rows without all four parts, or
+  /// without a title to show, are dropped rather than half-applied.
+  public static func parseQueueResponse(_ output: String) -> Queue {
+    var fields = output.components(separatedBy: "\u{1E}")
+    guard !fields.isEmpty else { return Queue() }
+    let playlist = fields.removeFirst().trimmingCharacters(in: .whitespacesAndNewlines)
+    let entries = fields.compactMap { row -> QueueEntry? in
+      let parts = row.components(separatedBy: "\u{1F}")
+      guard parts.count == 4 else { return nil }
+      let name = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !name.isEmpty else { return nil }
+      return QueueEntry(
+        name: name,
+        artist: parts[1].trimmingCharacters(in: .whitespacesAndNewlines),
+        album: parts[2].trimmingCharacters(in: .whitespacesAndNewlines),
+        isCurrent: parts[3].trimmingCharacters(in: .whitespacesAndNewlines) == "true")
+    }
+    return Queue(playlist: playlist, entries: entries)
   }
 
   /// Plays a song, preferring the user's own copy: a library track by persistent

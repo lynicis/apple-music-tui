@@ -55,7 +55,11 @@ public final class TerminalRuntime {
         }
 
         for event in mailbox.drain() {
-          if model.apply(event) { running = false }
+          switch event {
+          case .queueSuccess(let queue): model.applyQueueResult(queue, error: nil)
+          case .queueFailure(let message): model.applyQueueResult(nil, error: message)
+          default: if model.apply(event) { running = false }
+          }
           needsRender = true
         }
 
@@ -112,6 +116,8 @@ extension AppModel {
       applyLibrarySearchResult(query: query, songs: songs, error: nil)
     case .libraryFailure(let query, let message):
       applyLibrarySearchResult(query: query, songs: nil, error: message)
+    case .queueSuccess(let queue): applyQueueResult(queue, error: nil)
+    case .queueFailure(let message): applyQueueResult(nil, error: message)
     case .commandFinished(let message, let error, let quitAfterSuccess):
       applyCommandResult(message: message, error: error)
       return error == nil && quitAfterSuccess
@@ -121,6 +127,8 @@ extension AppModel {
 }
 
 private enum RuntimeEvent {
+  case queueSuccess(Queue)
+  case queueFailure(String)
   case nowPlayingSuccess(NowPlaying)
   case nowPlayingFailure(String)
   case playlistsSuccess([String])
@@ -158,6 +166,8 @@ private final class TerminalWorkers {
   private let catalogQueue = DispatchQueue(label: "MusicTUI.catalog-search", qos: .utility)
   private let refreshLock = NSLock()
   private var refreshInFlight = false
+  private let queueLock = NSLock()
+  private var queueInFlight = false
 
   init(mailbox: RuntimeEventMailbox) {
     self.mailbox = mailbox
@@ -188,6 +198,26 @@ private final class TerminalWorkers {
 
   func execute(_ pending: PendingAppCommand, music: MusicControlling, catalog: CatalogSearching) {
     switch pending.command {
+    case .loadQueue, .queuePlayNext, .queuePlayPrevious:
+      queueLock.lock()
+      guard !queueInFlight else {
+        queueLock.unlock()
+        return
+      }
+      queueInFlight = true
+      queueLock.unlock()
+      DispatchQueue.global(qos: .utility).async { [mailbox] in
+        defer {
+          self.queueLock.lock()
+          self.queueInFlight = false
+          self.queueLock.unlock()
+        }
+        do {
+          mailbox.post(.queueSuccess(try music.queue(command: pending.command.queueCommand)))
+        } catch {
+          mailbox.post(.queueFailure(error.localizedDescription))
+        }
+      }
     case .loadPlaylists:
       musicCommandQueue.async { [mailbox] in
         do {
@@ -225,6 +255,7 @@ private final class TerminalWorkers {
           case .playPlaylist(let name): try music.playPlaylist(name)
           case .playSong(let song): try music.play(song)
           case .quitMusic: try music.quitMusic()
+          case .loadQueue, .queuePlayNext, .queuePlayPrevious: break
           case .loadPlaylists, .searchCatalog, .searchLibrary: break
           }
           mailbox.post(

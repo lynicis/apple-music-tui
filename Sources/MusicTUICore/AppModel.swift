@@ -36,6 +36,12 @@ public struct AppModel {
   public var tracks: [Song] = []
   public var trackCursor = 0
 
+  /// The assembled Music queue. It is kept in sync with Music's own queue
+  /// whenever the queue changes by mutation, by a worker result, or by a
+  /// restart, so the rows on screen always describe the items Music is about
+  /// to play and not a mirror of a half-applied script.
+  public var queue: Queue = Queue()
+
   /// Volume we have asked Music for but that a poll has not confirmed yet, so a
   /// burst of keypresses steps from the last requested value instead of from a
   /// reading that is up to a second old. A volume change made in Music itself
@@ -135,6 +141,22 @@ public struct AppModel {
     }
   }
 
+  public mutating func applyQueueResult(_ value: Queue?, error: String?) {
+    guard let value else {
+      // A failed read keeps the rows already on screen: a transient AppleScript
+      // error must not blank a queue the user is reading.
+      status = "Could not read the queue: \(error ?? "Unknown error")"
+      return
+    }
+    // Keep the cursor on the row the user was looking at rather than jumping
+    // back to the top every time the queue is refreshed after a track change.
+    let cursor = queue.cursor
+    queue = value
+    queue.setCursor(cursor)
+    status =
+      value.isEmpty ? "Nothing is playing in Music." : "\(value.count) track(s) in \(value.playlist)."
+  }
+
   public mutating func applyCommandResult(message: String, error: String?) {
     status = error.map { "Error: \($0)" } ?? message
     statusShownAt = Date()
@@ -186,7 +208,29 @@ public struct AppModel {
     case .player: return handlePlayer(key)
     case .library: return handleLibrary(key)
     case .catalog: return handleCatalog(key)
+    case .queue: return handleQueue(key)
     }
+  }
+
+  private mutating func handleQueue(_ key: String) -> KeyAction {
+    if key == "l" || key == "ESC" || key == "TAB" {
+      mode = .player
+      return .continueRunning
+    }
+    // q and Q are handled once before the mode switch, like in every other view.
+    switch key {
+    case " ", "ENTER":
+      // There is no jump-to-row: Music's scripting can only start a track by
+      // leaving the playlist context behind, so the view says what to use
+      // instead of silently doing nothing.
+      status = "Use n / p to step through the queue, or Music itself to jump."
+    case "n", "RIGHT": enqueue(.queuePlayNext, message: "Skipping to the next track…")
+    case "p", "LEFT": enqueue(.queuePlayPrevious, message: "Moving to the previous track…")
+    case "UP", "k": queue.setCursor(queue.cursor - 1)
+    case "DOWN", "j": queue.setCursor(queue.cursor + 1)
+    default: break
+    }
+    return .continueRunning
   }
 
   public mutating func normalizeNowPlaying(_ original: NowPlaying, now: Date = Date()) -> NowPlaying
@@ -252,6 +296,9 @@ public struct AppModel {
         status = "Loading playlists…"
         pendingCommands.append(PendingAppCommand(command: .loadPlaylists, message: status))
       }
+    case "u":
+      mode = .queue
+      enqueue(.loadQueue, message: "Loading the queue…")
     case "/":
       mode = .catalog
       catalogDraft = catalogQuery
